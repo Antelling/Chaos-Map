@@ -70,7 +70,7 @@
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        .back-link {
+        #resetZoomBtn {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -81,11 +81,27 @@
             background: rgba(255, 255, 255, 0.05);
             border-radius: 8px;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 0.85rem;
+            cursor: pointer;
+            width: auto;
+            margin: 0;
         }
 
-        .back-link:hover {
+        #resetZoomBtn:hover {
             color: #fff;
             background: rgba(255, 255, 255, 0.1);
+        }
+
+        .top-bar #generateBtn,
+        .top-bar #backToMapBtn {
+            margin: 0;
+            width: auto;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+        }
+
+        .top-bar #generateBtn {
+            margin-left: auto;
         }
 
         .mode-indicator {
@@ -375,6 +391,7 @@
             height: 12px;
             background: linear-gradient(90deg, 
                 hsl(0, 80%, 50%), 
+                hsl(30, 80%, 50%), 
                 hsl(60, 80%, 50%), 
                 hsl(120, 80%, 50%), 
                 hsl(180, 80%, 50%), 
@@ -435,6 +452,20 @@
         .sim-btn:disabled {
             opacity: 0.4;
             cursor: not-allowed;
+        }
+
+        /* Zoom selection overlay */
+        .zoom-selection {
+            position: absolute;
+            border: 2px dashed #6af;
+            background: rgba(100, 170, 255, 0.1);
+            pointer-events: none;
+            display: none;
+            z-index: 20;
+        }
+
+        .zoom-selection.active {
+            display: block;
         }
 
         /* Mobile responsive */
@@ -512,6 +543,13 @@
                     <label>Perturbation Size</label>
                     <input type="number" id="perturbInput" value="0.0001" step="0.00001" min="0.000001">
                 </div>
+                <div class="form-group">
+                    <label>Perturbation Mode</label>
+                    <select id="perturbModeSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="fixed" selected>Fixed (same direction)</option>
+                        <option value="random">Random (normal distribution)</option>
+                    </select>
+                </div>
             </div>
 
             <div class="panel">
@@ -519,30 +557,98 @@
                 <div class="form-group">
                     <label>Map Resolution</label>
                     <select id="resolutionSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="256">256 x 256 (Fast)</option>
                         <option value="512">512 x 512</option>
                         <option value="1024" selected>1024 x 1024</option>
                         <option value="2048">2048 x 2048</option>
+                        <option value="4096">4096 x 4096 (Slow)</option>
+                    </select>
+                </div>
+                <div class="stats" id="renderStats"></div>
+            </div>
+
+            <div class="panel" id="zoomPanel">
+                <h3>Zoom Controls</h3>
+                <div class="form-group">
+                    <label>Current Zoom</label>
+                    <div id="zoomInfo" style="font-family: monospace; font-size: 0.8rem; color: #6af; padding: 0.4rem; background: rgba(0,0,0,0.3); border-radius: 4px;">
+                        1x (full view)
+                    </div>
+                </div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 0.5rem;">
+                    Drag on the map to zoom into a region
+                </div>
+            </div>
+
+            <div class="panel" id="velocityViewportPanel" style="display: none;">
+                <h3>Velocity Viewport</h3>
+                <div class="form-group">
+                    <label>View Range <span class="value-display" id="velocityRangeValue">±5</span></label>
+                    <select id="velocityRangeSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="2.5">±2.5 (Fine)</option>
+                        <option value="5" selected>±5 (Standard)</option>
+                        <option value="10">±10 (Wide)</option>
+                        <option value="20">±20 (Extra Wide)</option>
+                        <option value="50">±50 (Extreme)</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Tile Size</label>
-                    <select id="tileSizeSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
-                        <option value="64" selected>64 x 64</option>
-                        <option value="128">128 x 128</option>
-                        <option value="256">256 x 256</option>
+                    <label>Center ω₁ (Offset X)</label>
+                    <input type="number" id="velocityOffsetX" value="0" step="0.5">
+                </div>
+                <div class="form-group">
+                    <label>Center ω₂ (Offset Y)</label>
+                    <input type="number" id="velocityOffsetY" value="0" step="0.5">
+                </div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 0.5rem;">
+                    Drag on the map to zoom into a region. Use offset controls to pan, or use the Reset button to go back.
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Color Mapping</h3>
+                <div class="form-group">
+                    <label>Tone Mapping (how values map to colors)</label>
+                    <select id="colorMappingSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="0" selected>Linear (original)</option>
+                        <option value="1">Logarithmic (expand low values)</option>
+                        <option value="2">Square Root (mild expansion)</option>
+                        <option value="3">Exponential (emphasize fast)</option>
+                        <option value="4">S-Curve (mid contrast)</option>
+                        <option value="5">Gamma 0.4 (lift shadows)</option>
+                        <option value="6">Hyper Log (extreme expansion)</option>
+                        <option value="7">Hard Cap 97% (aggressive normalize)</option>
+                        <option value="8">Cyclical (fractal style)</option>
                     </select>
                 </div>
-                <button id="generateBtn" class="btn">Generate Chaos Map</button>
-                <button id="backToMapBtn" class="btn btn-secondary" style="display: none;">← Back to Position Map</button>
-                <div class="stats" id="renderStats"></div>
+                <div class="form-group" id="cyclePeriodGroup" style="display: none;">
+                    <label>Cycle Period (iterations per color cycle)</label>
+                    <input type="number" id="cyclePeriodInput" value="500" step="50" min="1" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                </div>
+                <div class="form-group">
+                    <label>Color Palette (hue mapping)</label>
+                    <select id="hueMappingSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="0" selected>Rainbow (purple→red)</option>
+                        <option value="1">Heatmap (black→red→yellow→white)</option>
+                        <option value="2">Cool (blue→cyan→green→yellow)</option>
+                        <option value="3">Hot (black→red→yellow)</option>
+                        <option value="4">Grayscale</option>
+                        <option value="5">Viridis (purple→blue→green→yellow)</option>
+                        <option value="6">Plasma (black→purple→yellow)</option>
+                        <option value="7">Inverted Rainbow</option>
+                    </select>
+                </div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 0.25rem;">
+                    Changing colors will re-render the map
+                </div>
             </div>
 
             <div class="panel">
                 <h3>Legend</h3>
                 <div class="legend">
-                    <span>Fast div.</span>
-                    <div class="legend-gradient"></div>
-                    <span>Slow div.</span>
+                    <span id="legendFast">Fast (red)</span>
+                    <div class="legend-gradient" id="legendGradient"></div>
+                    <span id="legendSlow">Slow (purple)</span>
                 </div>
                 <div style="font-size: 0.75rem; color: #888; margin-top: 0.5rem;">
                     White = No divergence
@@ -557,15 +663,21 @@
                 <div class="preview-box">
                     <div class="preview-header">
                         <span class="preview-title">📍 Pendulum</span>
-                        <button class="preview-btn" id="pendulumPreviewBtn" title="Click to enable preview mode">📌</button>
+                        <button class="preview-btn" id="pendulumPreviewBtn" title="Click to enable simulation mode">📌</button>
                     </div>
                     <div class="preview-canvas-container">
                         <canvas id="pendulumPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
-                        <div class="preview-info" id="pendulumPreviewInfo">Click 📌 to enable</div>
+                        <div class="preview-info" id="pendulumPreviewInfo">📌 Click to enable simulation mode</div>
                     </div>
                     <div class="simulation-controls" id="pendulumControls" style="display: none;">
-                        <button class="sim-btn" id="playPendulumBtn">▶ Play</button>
                         <button class="sim-btn" id="resetPendulumBtn">↺ Reset</button>
+                    </div>
+                    <div class="simulation-controls" id="pendulumSpeedControls" style="display: flex; flex-direction: column; gap: 0.3rem; padding: 0.5rem; background: rgba(255, 255, 255, 0.03); border-top: 1px solid rgba(255, 255, 255, 0.05);">
+                        <label style="font-size: 0.7rem; color: #888; display: flex; justify-content: space-between;">
+                            <span>Sim Speed</span>
+                            <span id="speedValue" style="color: #6af; font-family: monospace;">1x</span>
+                        </label>
+                        <input type="range" id="simSpeedSlider" min="1" max="20" value="1" step="1" style="width: 100%; accent-color: #6af;">
                     </div>
                 </div>
 
@@ -573,14 +685,11 @@
                 <div class="preview-box">
                     <div class="preview-header">
                         <span class="preview-title">📍 Velocity Map</span>
-                        <button class="preview-btn" id="velocityPreviewBtn" title="Click to enable preview mode">📌</button>
+                        <button class="preview-btn" id="velocityPreviewBtn" title="Click to enable velocity mode">📌</button>
                     </div>
                     <div class="preview-canvas-container">
                         <canvas id="velocityPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
-                        <div class="preview-info" id="velocityPreviewInfo">Click 📌 to enable</div>
-                    </div>
-                    <div class="simulation-controls" id="velocityControls" style="display: none;">
-                        <button class="sim-btn" id="switchToVelocityBtn">🔀 Switch Mode</button>
+                        <div class="preview-info" id="velocityPreviewInfo">Hover to preview velocity • 📌 Click to enter velocity mode</div>
                     </div>
                 </div>
             </div>
@@ -588,13 +697,18 @@
 
         <div class="main-content">
             <div class="top-bar">
-                <a href="index.html" class="back-link">← Back</a>
+                <button id="resetZoomBtn" class="btn btn-secondary" style="display: none;">
+                    ← Back
+                </button>
                 <span id="modeIndicator" class="mode-indicator">Position Map Mode</span>
+                <button id="generateBtn" class="btn">Generate Chaos Map</button>
+                <button id="backToMapBtn" class="btn btn-secondary" style="display: none;">← Back to Position Map</button>
             </div>
             <div class="map-wrapper">
                 <div class="map-container" id="mapContainer">
                     <canvas id="chaosMapCanvas"></canvas>
                     <div class="map-marker" id="mapMarker"></div>
+                    <div class="zoom-selection" id="zoomSelection"></div>
                     <div class="map-overlay" id="mapOverlay">
                         Hover with preview enabled
                     </div>
@@ -633,12 +747,31 @@
         uniform int u_maxIter;
         uniform float u_threshold;
         uniform float u_perturbation;
+        uniform int u_perturbMode; // 0 = fixed, 1 = random
+        uniform float u_seed; // Random seed for perturbation
         uniform int u_mode; // 0 = position map, 1 = velocity map
         uniform vec4 u_fixedState; // For velocity mode: fixed theta1, theta2, omega1, omega2
         uniform float u_velocityScale;
+        uniform vec2 u_velocityOffset;
+        uniform int u_colorMapping; // 0=linear, 1=log, 2=sqrt, 3=exp, 4=smoothstep, 5=gamma, 6=hyperlog, 7=cap97, 8=cyclical
+        uniform float u_cyclePeriod; // for cyclical mapping: iterations per color cycle
+        uniform int u_hueMapping; // 0=rainbow, 1=heatmap, 2=cool, 3=hot, 4=grayscale, 5=viridis, 6=plasma, 7=inv_rainbow
+
+        uniform int u_zoomEnabled; // 0 = no zoom, 1 = zoom active
+        uniform float u_zoomMinX;
+        uniform float u_zoomMaxX;
+        uniform float u_zoomMinY;
+        uniform float u_zoomMaxY;
         
         const float PI = 3.14159265359;
         const int MAX_ITERATIONS = 10000;
+        
+        // Hash function for pseudo-random number generation
+        float hash(vec2 p) {
+            vec3 p3 = fract(vec3(p.xyx) * 0.13); 
+            p3 += dot(p3, p3.yzx + 3.333);
+            return fract((p3.x + p3.y) * p3.z);
+        }
         
         struct State {
             float theta1;
@@ -743,6 +876,118 @@
             return theta - PI;
         }
         
+        // Convert HSV to RGB
+        vec3 hsv2rgb(float h, float s, float v) {
+            float c = v * s;
+            float x = c * (1.0 - abs(mod(h * 6.0, 2.0) - 1.0));
+            float m = v - c;
+            
+            vec3 rgb;
+            if (h < 1.0/6.0) rgb = vec3(c, x, 0.0);
+            else if (h < 2.0/6.0) rgb = vec3(x, c, 0.0);
+            else if (h < 3.0/6.0) rgb = vec3(0.0, c, x);
+            else if (h < 4.0/6.0) rgb = vec3(0.0, x, c);
+            else if (h < 5.0/6.0) rgb = vec3(x, 0.0, c);
+            else rgb = vec3(c, 0.0, x);
+            
+            return rgb + m;
+        }
+        
+        // Map iteration fraction t to RGB color based on palette
+        vec3 mapHueToRGB(float t, int palette) {
+            // t goes from 0.0 (fast divergence, red in rainbow) to 1.0 (slow, purple)
+            
+            if (palette == 0) {
+                // Rainbow: fast=red (0.0), slow=purple (0.85)
+                float hue = (1.0 - t) * 0.85;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            else if (palette == 1) {
+                // Heatmap: black -> red -> yellow -> white
+                if (t < 0.33) {
+                    // Black to red
+                    float u = t / 0.33;
+                    return vec3(u, 0.0, 0.0);
+                } else if (t < 0.66) {
+                    // Red to yellow
+                    float u = (t - 0.33) / 0.33;
+                    return vec3(1.0, u, 0.0);
+                } else {
+                    // Yellow to white
+                    float u = (t - 0.66) / 0.34;
+                    return vec3(1.0, 1.0, u);
+                }
+            }
+            else if (palette == 2) {
+                // Cool: blue -> cyan -> green -> yellow
+                float hue = 0.67 - t * 0.67; // 0.67 (blue) to 0.0 (red), but we want yellow at end
+                hue = 0.67 - t * 0.5; // 0.67 (blue) -> 0.17 (yellow)
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            else if (palette == 3) {
+                // Hot: black -> red -> yellow
+                if (t < 0.5) {
+                    float u = t / 0.5;
+                    return vec3(u, 0.0, 0.0);
+                } else {
+                    float u = (t - 0.5) / 0.5;
+                    return vec3(1.0, u, 0.0);
+                }
+            }
+            else if (palette == 4) {
+                // Grayscale
+                return vec3(1.0 - t);
+            }
+            else if (palette == 5) {
+                // Viridis approximation: purple -> blue -> green -> yellow
+                // Using a simple approximation with smooth curves
+                vec3 a = vec3(0.5, 0.0, 0.5);  // purple
+                vec3 b = vec3(0.0, 0.5, 1.0);  // blue-cyan
+                vec3 c = vec3(0.0, 1.0, 0.5);  // green
+                vec3 d = vec3(1.0, 1.0, 0.0);  // yellow
+                
+                float u = 1.0 - t; // Flip so fast=purple, slow=yellow
+                if (u < 0.33) {
+                    float x = u / 0.33;
+                    return mix(a, b, x);
+                } else if (u < 0.66) {
+                    float x = (u - 0.33) / 0.33;
+                    return mix(b, c, x);
+                } else {
+                    float x = (u - 0.66) / 0.34;
+                    return mix(c, d, x);
+                }
+            }
+            else if (palette == 6) {
+                // Plasma approximation: black -> purple -> pink -> yellow
+                vec3 a = vec3(0.0, 0.0, 0.0);  // black
+                vec3 b = vec3(0.5, 0.0, 0.5);  // purple
+                vec3 c = vec3(1.0, 0.0, 0.5);  // pink
+                vec3 d = vec3(1.0, 1.0, 0.0);  // yellow
+                
+                float u = 1.0 - t; // Flip so fast=dark, slow=bright
+                if (u < 0.33) {
+                    float x = u / 0.33;
+                    return mix(a, b, x);
+                } else if (u < 0.66) {
+                    float x = (u - 0.33) / 0.33;
+                    return mix(b, c, x);
+                } else {
+                    float x = (u - 0.66) / 0.34;
+                    return mix(c, d, x);
+                }
+            }
+            else if (palette == 7) {
+                // Inverted Rainbow: fast=purple, slow=red
+                float hue = t * 0.85;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            
+            // Default to rainbow
+            float hue = (1.0 - t) * 0.85;
+            return hsv2rgb(hue, 1.0, 1.0);
+        }
+        
         void main() {
             // gl_FragCoord is relative to the tile framebuffer with Y=0 at bottom
             // We need to flip Y to match canvas coordinates (Y=0 at top)
@@ -755,23 +1000,52 @@
             if (u_mode == 0) {
                 // Position map mode: map pixel to theta1, theta2
                 // X axis = theta1, Y axis = theta2
-                s1.theta1 = (normalizedCoord.x * 2.0 - 1.0) * PI;
-                s1.theta2 = (normalizedCoord.y * 2.0 - 1.0) * PI;
+                // normalizedCoord: y=0 is top, y=1 is bottom (after tile Y-flip)
+                // But physics expects: y=0 is bottom (-PI), y=1 is top (+PI)
+                float finalNx = normalizedCoord.x;
+                float finalNy = 1.0 - normalizedCoord.y; // Flip Y to match physics coordinates
+                if (u_zoomEnabled > 0) {
+                    finalNx = u_zoomMinX + normalizedCoord.x * (u_zoomMaxX - u_zoomMinX);
+                    // For zoom: u_zoomMinY is bottom, u_zoomMaxY is top
+                    // normalizedCoord.y=0 is top, so we want finalNy close to u_zoomMaxY
+                    finalNy = u_zoomMaxY - normalizedCoord.y * (u_zoomMaxY - u_zoomMinY);
+                }
+                s1.theta1 = (finalNx * 2.0 - 1.0) * PI;
+                s1.theta2 = (finalNy * 2.0 - 1.0) * PI;
                 s1.omega1 = 0.0;
                 s1.omega2 = 0.0;
             } else {
                 // Velocity map mode: fixed position, varying velocity
                 s1.theta1 = u_fixedState.x;
                 s1.theta2 = u_fixedState.y;
-                // Map pixel to omega1, omega2
-                s1.omega1 = (normalizedCoord.x * 2.0 - 1.0) * u_velocityScale;
-                s1.omega2 = (normalizedCoord.y * 2.0 - 1.0) * u_velocityScale;
+                // Map pixel to omega1, omega2 with offset for panning
+                s1.omega1 = (normalizedCoord.x * 2.0 - 1.0) * u_velocityScale + u_velocityOffset.x;
+                s1.omega2 = (normalizedCoord.y * 2.0 - 1.0) * u_velocityScale + u_velocityOffset.y;
             }
             
             // Create perturbed state
             s2 = s1;
-            s2.omega1 += u_perturbation;
-            s2.omega2 += u_perturbation * 0.7; // Different direction
+            
+            // Generate unique random seed based on pixel position and global seed
+            vec2 seed = normalizedCoord + vec2(u_seed);
+            
+            if (u_perturbMode == 1) {
+                // Random perturbation using Box-Muller transform for normal distribution
+                float u1 = hash(seed);
+                float u2 = hash(seed + 1.0);
+                float r = sqrt(-2.0 * log(u1 + 0.0001)); // Add small value to avoid log(0)
+                float theta = 2.0 * 3.14159265359 * u2;
+                float rand1 = r * cos(theta); // Standard normal N(0,1)
+                float rand2 = r * sin(theta); // Standard normal N(0,1)
+                
+                // Scale by perturbation size (perturbation acts as standard deviation)
+                s2.omega1 += rand1 * u_perturbation;
+                s2.omega2 += rand2 * u_perturbation;
+            } else {
+                // Fixed perturbation (original behavior)
+                s2.omega1 += u_perturbation;
+                s2.omega2 += u_perturbation * 0.7; // Different direction
+            }
             
             int divergenceIter = u_maxIter;
             bool diverged = false;
@@ -795,29 +1069,57 @@
                 }
             }
             
+            // Output colored pixels
             vec3 color;
             if (!diverged) {
                 // Converged or max iterations - white
                 color = vec3(1.0, 1.0, 1.0);
             } else {
                 // Diverged - color by how quickly
-                float t = float(divergenceIter) / float(u_maxIter);
-                // Rainbow coloring: fast divergence = red, slow = purple
-                float hue = (1.0 - t) * 0.85; // 0.85 = purple-ish
-                // HSV to RGB
-                float c = 1.0;
-                float x = c * (1.0 - abs(mod(hue * 6.0, 2.0) - 1.0));
-                float m = 0.0;
+                float iter = float(divergenceIter);
+                float maxIter = float(u_maxIter);
                 
-                vec3 rgb;
-                if (hue < 1.0/6.0) rgb = vec3(c, x, 0.0);
-                else if (hue < 2.0/6.0) rgb = vec3(x, c, 0.0);
-                else if (hue < 3.0/6.0) rgb = vec3(0.0, c, x);
-                else if (hue < 4.0/6.0) rgb = vec3(0.0, x, c);
-                else if (hue < 5.0/6.0) rgb = vec3(x, 0.0, c);
-                else rgb = vec3(c, 0.0, x);
+                // Apply different color mappings
+                float t;
+                if (u_colorMapping == 0) {
+                    // Linear (original)
+                    t = iter / maxIter;
+                } else if (u_colorMapping == 1) {
+                    // Logarithmic: compresses high values, expands low
+                    t = log(1.0 + iter) / log(1.0 + maxIter);
+                } else if (u_colorMapping == 2) {
+                    // Square root: mild compression of high values
+                    t = sqrt(iter / maxIter);
+                } else if (u_colorMapping == 3) {
+                    // Exponential: emphasizes very fast divergence
+                    t = (exp(iter / maxIter) - 1.0) / (2.718281828 - 1.0);
+                } else if (u_colorMapping == 4) {
+                    // S-curve (smoothstep): more contrast in mid-range
+                    float x = iter / maxIter;
+                    t = x * x * (3.0 - 2.0 * x);
+                } else if (u_colorMapping == 5) {
+                    // Histogram-style equalization approximation
+                    t = pow(iter / maxIter, 0.4);
+                } else if (u_colorMapping == 6) {
+                    // Hyper Log: double logarithmic for extreme expansion of low values
+                    t = log(1.0 + log(1.0 + iter)) / log(1.0 + log(1.0 + maxIter));
+                } else if (u_colorMapping == 7) {
+                    // Hard-cap at 97th percentile: linear mapping with hard clamp
+                    // Cap at 97% of maxIter - anything above gets max color
+                    float capIter = maxIter * 0.97;
+                    t = iter / capIter;
+                    t = clamp(t, 0.0, 1.0);
+                } else if (u_colorMapping == 8) {
+                    // Cyclical/fractal style: colors repeat periodically
+                    // This reveals structure that linear mapping hides
+                    float cyclePeriod = max(u_cyclePeriod, 1.0); // minimum 1 iteration
+                    t = fract(iter / cyclePeriod);
+                } else {
+                    t = iter / maxIter;
+                }
                 
-                color = rgb + m;
+                // Apply hue palette mapping based on u_hueMapping
+                color = mapHueToRGB(t, u_hueMapping);
             }
             
             gl_FragColor = vec4(color, 1.0);
