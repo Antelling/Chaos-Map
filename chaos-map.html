@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Double Pendulum Chaos Map</title>
+    <link rel="stylesheet" href="index.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #eaeaea;
+            overflow: hidden; /* Prevent body scroll */
+        }
+
+        .main-container {
+            display: flex;
+            height: 100vh;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        /* Left sidebar - scrollable */
+        .sidebar {
+            width: 320px;
+            min-width: 320px;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+
+        /* Main content area - map is fixed here */
+        .main-content {
+            flex: 1;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #888;
+            text-decoration: none;
+            transition: color 0.3s ease;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .back-link:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .mode-indicator {
+            padding: 0.5rem 1rem;
+            background: rgba(100, 200, 255, 0.2);
+            border-radius: 8px;
+            border: 1px solid rgba(100, 200, 255, 0.3);
+            font-size: 0.9rem;
+            color: #8cf;
+        }
+
+        .mode-indicator.velocity-mode {
+            background: rgba(255, 200, 100, 0.2);
+            border-color: rgba(255, 200, 100, 0.3);
+            color: #fc8;
+        }
+
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .map-container {
+            position: relative;
+            width: 100%;
+            max-width: min(calc(100vh - 120px), calc(100vw - 360px));
+            aspect-ratio: 1;
+            background: #0a0a0a;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #chaosMapCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        .map-marker {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            background: rgba(100, 170, 255, 0.5);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+            box-shadow: 0 0 12px rgba(100, 170, 255, 0.8), inset 0 0 8px rgba(100, 170, 255, 0.4);
+            z-index: 10;
+        }
+
+        .map-marker.active {
+            display: block;
+        }
+
+        .map-marker::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #fff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .map-overlay {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            color: #888;
+            font-family: monospace;
+            pointer-events: none;
+        }
+
+        .progress-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #6af, #a8f);
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        .panel h3 {
+            font-size: 0.95rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+            color: #a0a0a0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            color: #ccc;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .form-group input[type="number"] {
+            padding: 0.4rem 0.6rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.85rem;
+            width: 100%;
+        }
+
+        .form-group input[type="range"] {
+            width: 100%;
+            accent-color: #6af;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        .value-display {
+            color: #6af;
+            font-family: monospace;
+        }
+
+        .btn {
+            padding: 0.6rem 1rem;
+            background: rgba(100, 150, 255, 0.2);
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 6px;
+            color: #8af;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            margin-top: 0.5rem;
+        }
+
+        .btn:hover {
+            background: rgba(100, 150, 255, 0.3);
+            color: #aff;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            color: #ccc;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+        }
+
+        /* Preview section */
+        .previews-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .preview-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .preview-title {
+            font-size: 0.8rem;
+            color: #aaa;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .preview-btn {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 0.2rem;
+            opacity: 0.6;
+            transition: all 0.2s ease;
+            filter: grayscale(100%);
+        }
+
+        .preview-btn:hover {
+            opacity: 1;
+            transform: scale(1.1);
+        }
+
+        .preview-btn.active {
+            opacity: 1;
+            filter: grayscale(0%);
+        }
+
+        .preview-canvas-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1;
+            background: #0a0a0a;
+        }
+
+        .preview-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .preview-info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 0.4rem 0.5rem;
+            background: rgba(0, 0, 0, 0.8);
+            font-size: 0.7rem;
+            color: #888;
+            font-family: monospace;
+        }
+
+        .stats {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 0.5rem;
+        }
+
+        .legend {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .legend-gradient {
+            width: 100px;
+            height: 12px;
+            background: linear-gradient(90deg, 
+                hsl(0, 80%, 50%), 
+                hsl(60, 80%, 50%), 
+                hsl(120, 80%, 50%), 
+                hsl(180, 80%, 50%), 
+                hsl(240, 80%, 50%), 
+                hsl(300, 80%, 50%)
+            );
+            border-radius: 2px;
+        }
+
+        .loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.8);
+            font-size: 0.9rem;
+            color: #888;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #6af;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .simulation-controls {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .sim-btn {
+            flex: 1;
+            padding: 0.4rem;
+            background: rgba(100, 150, 255, 0.15);
+            border: 1px solid rgba(100, 150, 255, 0.25);
+            border-radius: 4px;
+            color: #8af;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .sim-btn:hover {
+            background: rgba(100, 150, 255, 0.25);
+        }
+
+        .sim-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* Mobile responsive */
+        @media (max-width: 900px) {
+            body {
+                overflow-y: auto;
+            }
+            
+            .main-container {
+                flex-direction: column;
+                height: auto;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                max-height: none;
+                order: 2;
+            }
+
+            .main-content {
+                order: 1;
+                height: auto;
+                min-height: 500px;
+            }
+
+            .map-container {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="panel">
+                <h3>Pendulum Parameters</h3>
+                <div class="form-group">
+                    <label>Arm 1 Length (L1)</label>
+                    <input type="number" id="l1Input" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Arm 2 Length (L2)</label>
+                    <input type="number" id="l2Input" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Mass 1 (m1)</label>
+                    <input type="number" id="m1Input" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Mass 2 (m2)</label>
+                    <input type="number" id="m2Input" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label>Gravity (g)</label>
+                    <input type="number" id="gInput" value="9.81" step="0.1">
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Simulation Settings</h3>
+                <div class="form-group">
+                    <label>Time Step (dt)</label>
+                    <input type="number" id="dtInput" value="0.01" step="0.001" min="0.001">
+                </div>
+                <div class="form-group">
+                    <label>Max Iterations</label>
+                    <input type="number" id="maxIterInput" value="5000" step="100" min="100">
+                </div>
+                <div class="form-group">
+                    <label>Divergence Threshold</label>
+                    <input type="number" id="thresholdInput" value="0.5" step="0.1" min="0.01">
+                </div>
+                <div class="form-group">
+                    <label>Perturbation Size</label>
+                    <input type="number" id="perturbInput" value="0.0001" step="0.00001" min="0.000001">
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3>Map Settings</h3>
+                <div class="form-group">
+                    <label>Map Resolution</label>
+                    <select id="resolutionSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="512">512 x 512</option>
+                        <option value="1024" selected>1024 x 1024</option>
+                        <option value="2048">2048 x 2048</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tile Size</label>
+                    <select id="tileSizeSelect" style="width: 100%; padding: 0.4rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); color: #fff; border-radius: 6px;">
+                        <option value="64" selected>64 x 64</option>
+                        <option value="128">128 x 128</option>
+                        <option value="256">256 x 256</option>
+                    </select>
+                </div>
+                <button id="generateBtn" class="btn">Generate Chaos Map</button>
+                <button id="backToMapBtn" class="btn btn-secondary" style="display: none;">← Back to Position Map</button>
+                <div class="stats" id="renderStats"></div>
+            </div>
+
+            <div class="panel">
+                <h3>Legend</h3>
+                <div class="legend">
+                    <span>Fast div.</span>
+                    <div class="legend-gradient"></div>
+                    <span>Slow div.</span>
+                </div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 0.5rem;">
+                    White = No divergence
+                </div>
+            </div>
+
+            <!-- Preview Section -->
+            <div class="panel previews-container">
+                <h3>Previews</h3>
+                
+                <!-- Pendulum Preview -->
+                <div class="preview-box">
+                    <div class="preview-header">
+                        <span class="preview-title">📍 Pendulum</span>
+                        <button class="preview-btn" id="pendulumPreviewBtn" title="Click to enable preview mode">📌</button>
+                    </div>
+                    <div class="preview-canvas-container">
+                        <canvas id="pendulumPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
+                        <div class="preview-info" id="pendulumPreviewInfo">Click 📌 to enable</div>
+                    </div>
+                    <div class="simulation-controls" id="pendulumControls" style="display: none;">
+                        <button class="sim-btn" id="playPendulumBtn">▶ Play</button>
+                        <button class="sim-btn" id="resetPendulumBtn">↺ Reset</button>
+                    </div>
+                </div>
+
+                <!-- Velocity Map Preview -->
+                <div class="preview-box">
+                    <div class="preview-header">
+                        <span class="preview-title">📍 Velocity Map</span>
+                        <button class="preview-btn" id="velocityPreviewBtn" title="Click to enable preview mode">📌</button>
+                    </div>
+                    <div class="preview-canvas-container">
+                        <canvas id="velocityPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
+                        <div class="preview-info" id="velocityPreviewInfo">Click 📌 to enable</div>
+                    </div>
+                    <div class="simulation-controls" id="velocityControls" style="display: none;">
+                        <button class="sim-btn" id="switchToVelocityBtn">🔀 Switch Mode</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="top-bar">
+                <a href="index.html" class="back-link">← Back</a>
+                <span id="modeIndicator" class="mode-indicator">Position Map Mode</span>
+            </div>
+            <div class="map-wrapper">
+                <div class="map-container" id="mapContainer">
+                    <canvas id="chaosMapCanvas"></canvas>
+                    <div class="map-marker" id="mapMarker"></div>
+                    <div class="map-overlay" id="mapOverlay">
+                        Hover with preview enabled
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="loading" id="loadingIndicator" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>Computing...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebGL Chaos Shader -->
+    <script id="chaos-vertex-shader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+        }
+    </script>
+
+    <script id="chaos-fragment-shader" type="x-shader/x-fragment">
+        precision highp float;
+        
+        uniform vec2 u_resolution;
+        uniform vec2 u_tileOffset;
+        uniform vec2 u_tileSize;
+        uniform float u_l1;
+        uniform float u_l2;
+        uniform float u_m1;
+        uniform float u_m2;
+        uniform float u_g;
+        uniform float u_dt;
+        uniform int u_maxIter;
+        uniform float u_threshold;
+        uniform float u_perturbation;
+        uniform int u_mode; // 0 = position map, 1 = velocity map
+        uniform vec4 u_fixedState; // For velocity mode: fixed theta1, theta2, omega1, omega2
+        uniform float u_velocityScale;
+        
+        const float PI = 3.14159265359;
+        const int MAX_ITERATIONS = 10000;
+        
+        struct State {
+            float theta1;
+            float theta2;
+            float omega1;
+            float omega2;
+        };
+        
+        // Compute accelerations
+        void computeAccelerations(State s, out float alpha1, out float alpha2) {
+            float M = u_m1 + u_m2;
+            float delta = s.theta1 - s.theta2;
+            float sinDelta = sin(delta);
+            float cosDelta = cos(delta);
+            
+            float alpha_denom = u_m1 + u_m2 * sinDelta * sinDelta;
+            
+            // From https://physics.umd.edu/hep/drew/pendulum2.html
+            float num1 = -u_m2 * u_l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
+                       - u_m2 * u_l2 * s.omega2 * s.omega2 * sinDelta
+                       - M * u_g * sin(s.theta1)
+                       + u_m2 * u_g * sin(s.theta2) * cosDelta;
+            
+            float num2 = M * u_l1 * s.omega1 * s.omega1 * sinDelta
+                       + u_m2 * u_l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
+                       + M * u_g * sin(s.theta1) * cosDelta
+                       - M * u_g * sin(s.theta2);
+            
+            alpha1 = num1 / (u_l1 * alpha_denom);
+            alpha2 = num2 / (u_l2 * alpha_denom);
+        }
+        
+        // RK4 integration step for better stability
+        State stepPhysicsRK4(State s) {
+            State k1, k2, k3, k4;
+            State temp;
+            
+            float dt = u_dt;
+            
+            // k1
+            computeAccelerations(s, k1.omega1, k1.omega2);
+            k1.theta1 = s.omega1;
+            k1.theta2 = s.omega2;
+            
+            // k2
+            temp.theta1 = s.theta1 + 0.5 * dt * k1.theta1;
+            temp.theta2 = s.theta2 + 0.5 * dt * k1.theta2;
+            temp.omega1 = s.omega1 + 0.5 * dt * k1.omega1;
+            temp.omega2 = s.omega2 + 0.5 * dt * k1.omega2;
+            computeAccelerations(temp, k2.omega1, k2.omega2);
+            k2.theta1 = temp.omega1;
+            k2.theta2 = temp.omega2;
+            
+            // k3
+            temp.theta1 = s.theta1 + 0.5 * dt * k2.theta1;
+            temp.theta2 = s.theta2 + 0.5 * dt * k2.theta2;
+            temp.omega1 = s.omega1 + 0.5 * dt * k2.omega1;
+            temp.omega2 = s.omega2 + 0.5 * dt * k2.omega2;
+            computeAccelerations(temp, k3.omega1, k3.omega2);
+            k3.theta1 = temp.omega1;
+            k3.theta2 = temp.omega2;
+            
+            // k4
+            temp.theta1 = s.theta1 + dt * k3.theta1;
+            temp.theta2 = s.theta2 + dt * k3.theta2;
+            temp.omega1 = s.omega1 + dt * k3.omega1;
+            temp.omega2 = s.omega2 + dt * k3.omega2;
+            computeAccelerations(temp, k4.omega1, k4.omega2);
+            k4.theta1 = temp.omega1;
+            k4.theta2 = temp.omega2;
+            
+            // Combine
+            State next;
+            next.theta1 = s.theta1 + dt * (k1.theta1 + 2.0 * k2.theta1 + 2.0 * k3.theta1 + k4.theta1) / 6.0;
+            next.theta2 = s.theta2 + dt * (k1.theta2 + 2.0 * k2.theta2 + 2.0 * k3.theta2 + k4.theta2) / 6.0;
+            next.omega1 = s.omega1 + dt * (k1.omega1 + 2.0 * k2.omega1 + 2.0 * k3.omega1 + k4.omega1) / 6.0;
+            next.omega2 = s.omega2 + dt * (k1.omega2 + 2.0 * k2.omega2 + 2.0 * k3.omega2 + k4.omega2) / 6.0;
+            
+            return next;
+        }
+        
+        // Circular difference for angles (handles wrap-around at ±PI)
+        float circularDiff(float a, float b) {
+            float d = a - b;
+            if (d > PI) d -= 2.0 * PI;
+            if (d < -PI) d += 2.0 * PI;
+            return d;
+        }
+        
+        float measureDivergence(State s1, State s2) {
+            float dTheta = circularDiff(s1.theta1, s2.theta1);
+            float dTheta2 = circularDiff(s1.theta2, s2.theta2);
+            float dOmega = s1.omega1 - s2.omega1;
+            float dOmega2 = s1.omega2 - s2.omega2;
+            return sqrt(dTheta * dTheta + dTheta2 * dTheta2 + dOmega * dOmega + dOmega2 * dOmega2);
+        }
+        
+        // Normalize angle to [-PI, PI]
+        float normalizeAngle(float theta) {
+            theta = mod(theta + PI, 2.0 * PI);
+            if (theta < 0.0) theta += 2.0 * PI;
+            return theta - PI;
+        }
+        
+        void main() {
+            // gl_FragCoord is relative to the tile framebuffer with Y=0 at bottom
+            // We need to flip Y to match canvas coordinates (Y=0 at top)
+            vec2 fragCoord = vec2(gl_FragCoord.x, u_tileSize.y - gl_FragCoord.y);
+            vec2 pixelCoord = fragCoord + u_tileOffset;
+            vec2 normalizedCoord = pixelCoord / u_resolution;
+            
+            State s1, s2;
+            
+            if (u_mode == 0) {
+                // Position map mode: map pixel to theta1, theta2
+                // X axis = theta1, Y axis = theta2
+                s1.theta1 = (normalizedCoord.x * 2.0 - 1.0) * PI;
+                s1.theta2 = (normalizedCoord.y * 2.0 - 1.0) * PI;
+                s1.omega1 = 0.0;
+                s1.omega2 = 0.0;
+            } else {
+                // Velocity map mode: fixed position, varying velocity
+                s1.theta1 = u_fixedState.x;
+                s1.theta2 = u_fixedState.y;
+                // Map pixel to omega1, omega2
+                s1.omega1 = (normalizedCoord.x * 2.0 - 1.0) * u_velocityScale;
+                s1.omega2 = (normalizedCoord.y * 2.0 - 1.0) * u_velocityScale;
+            }
+            
+            // Create perturbed state
+            s2 = s1;
+            s2.omega1 += u_perturbation;
+            s2.omega2 += u_perturbation * 0.7; // Different direction
+            
+            int divergenceIter = u_maxIter;
+            bool diverged = false;
+            
+            // WebGL requires constant loop bound
+            for (int i = 0; i < MAX_ITERATIONS; i++) {
+                if (i >= u_maxIter) break;
+                
+                s1 = stepPhysicsRK4(s1);
+                s2 = stepPhysicsRK4(s2);
+                
+                // Note: angle normalization removed - angles evolve continuously
+                // to avoid artificial discontinuities at ±PI boundaries
+                
+                float dist = measureDivergence(s1, s2);
+                
+                if (dist > u_threshold && !diverged) {
+                    divergenceIter = i;
+                    diverged = true;
+                    break;
+                }
+            }
+            
+            vec3 color;
+            if (!diverged) {
+                // Converged or max iterations - white
+                color = vec3(1.0, 1.0, 1.0);
+            } else {
+                // Diverged - color by how quickly
+                float t = float(divergenceIter) / float(u_maxIter);
+                // Rainbow coloring: fast divergence = red, slow = purple
+                float hue = (1.0 - t) * 0.85; // 0.85 = purple-ish
+                // HSV to RGB
+                float c = 1.0;
+                float x = c * (1.0 - abs(mod(hue * 6.0, 2.0) - 1.0));
+                float m = 0.0;
+                
+                vec3 rgb;
+                if (hue < 1.0/6.0) rgb = vec3(c, x, 0.0);
+                else if (hue < 2.0/6.0) rgb = vec3(x, c, 0.0);
+                else if (hue < 3.0/6.0) rgb = vec3(0.0, c, x);
+                else if (hue < 4.0/6.0) rgb = vec3(0.0, x, c);
+                else if (hue < 5.0/6.0) rgb = vec3(x, 0.0, c);
+                else rgb = vec3(c, 0.0, x);
+                
+                color = rgb + m;
+            }
+            
+            gl_FragColor = vec4(color, 1.0);
+        }
+    </script>
+
+    <script src="chaos-map.js"></script>
+</body>
+</html>

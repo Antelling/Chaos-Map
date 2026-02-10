@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Double Pendulum</title>
+    <link rel="stylesheet" href="index.css">
+    <style>
+        .simulation-container {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #888;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .back-link:hover {
+            color: #fff;
+        }
+
+        .canvas-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        canvas {
+            background: #0a0a0a;
+            border-radius: 8px;
+            display: block;
+        }
+
+        .controls-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .controls-container h3 {
+            font-size: 1.1rem;
+            font-weight: 400;
+            margin-bottom: 1rem;
+            color: #a0a0a0;
+        }
+
+        .controls-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+
+        .form-group input {
+            padding: 0.5rem 0.75rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.4);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            background: rgba(100, 150, 255, 0.2);
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 6px;
+            color: #8af;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            background: rgba(100, 150, 255, 0.3);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            color: #ccc;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .links-section {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chaos-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #8af;
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            background: rgba(100, 150, 255, 0.1);
+            border-radius: 6px;
+            border: 1px solid rgba(100, 150, 255, 0.2);
+            transition: all 0.2s ease;
+        }
+
+        .chaos-link:hover {
+            background: rgba(100, 150, 255, 0.2);
+            color: #aff;
+        }
+
+        .stats {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.5rem;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="simulation-container">
+        <nav>
+            <a href="index.html" class="back-link">← Back to Simulations</a>
+        </nav>
+
+        <header>
+            <h1>Double Pendulum</h1>
+        </header>
+
+        <div class="canvas-container">
+            <canvas id="pendulumCanvas" width="800" height="600"></canvas>
+        </div>
+
+        <div class="controls-container">
+            <h3>Parameters</h3>
+            <form id="controlsForm" class="controls-form">
+                <div class="form-group">
+                    <label for="l1">Arm 1 Length (L1)</label>
+                    <input type="number" id="l1" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="l2">Arm 2 Length (L2)</label>
+                    <input type="number" id="l2" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="m1">Mass 1 (m1)</label>
+                    <input type="number" id="m1" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="m2">Mass 2 (m2)</label>
+                    <input type="number" id="m2" value="1.0" step="0.1" min="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="g">Gravity (g)</label>
+                    <input type="number" id="g" value="9.81" step="0.1">
+                </div>
+                <div class="form-group">
+                    <label for="dt">Time Step (dt)</label>
+                    <input type="number" id="dt" value="0.016" step="0.001" min="0.001">
+                </div>
+            </form>
+            
+            <div class="button-group">
+                <button id="resetBtn" class="btn">Reset Simulation</button>
+                <button id="randomBtn" class="btn btn-secondary">Randomize</button>
+            </div>
+            
+            <div class="stats" id="stats">Energy: 0.00 J | Click and drag to set initial position</div>
+            
+            <div class="links-section">
+                <a href="chaos-map.html" class="chaos-link">🌈 Explore Chaos Map →</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('pendulumCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Parameters
+        let params = {
+            l1: 1.0,
+            l2: 1.0,
+            m1: 1.0,
+            m2: 1.0,
+            g: 9.81,
+            dt: 0.016
+        };
+        
+        // Physics state
+        let state = {
+            theta1: Math.PI / 1.5,
+            theta2: Math.PI / 2,
+            omega1: 0,
+            omega2: 0
+        };
+        
+        // Trail for visualization
+        let trail = [];
+        const maxTrail = 200;
+        
+        // Dragging
+        let isDragging = false;
+        let dragTarget = null;
+        
+        // Pivot position
+        const cx = canvas.width / 2;
+        const cy = 150;
+        const scale = 150;
+        
+        function getPositions() {
+            const x1 = cx + Math.sin(state.theta1) * params.l1 * scale;
+            const y1 = cy + Math.cos(state.theta1) * params.l1 * scale;
+            const x2 = x1 + Math.sin(state.theta2) * params.l2 * scale;
+            const y2 = y1 + Math.cos(state.theta2) * params.l2 * scale;
+            return { x1, y1, x2, y2 };
+        }
+        
+        function stepPhysics() {
+            const { l1, l2, m1, m2, g, dt } = params;
+            const M = m1 + m2;
+            
+            const delta = state.theta1 - state.theta2;
+            const sinDelta = Math.sin(delta);
+            const cosDelta = Math.cos(delta);
+            
+            const alpha_denom = m1 + m2 * sinDelta * sinDelta;
+            
+            // From https://physics.umd.edu/hep/drew/pendulum2.html
+            const num1 = -m2 * l1 * state.omega1 * state.omega1 * sinDelta * cosDelta
+                       - m2 * l2 * state.omega2 * state.omega2 * sinDelta
+                       - M * g * Math.sin(state.theta1)
+                       + m2 * g * Math.sin(state.theta2) * cosDelta;
+            
+            const num2 = M * l1 * state.omega1 * state.omega1 * sinDelta
+                       + m2 * l2 * state.omega2 * state.omega2 * sinDelta * cosDelta
+                       + M * g * Math.sin(state.theta1) * cosDelta
+                       - M * g * Math.sin(state.theta2);
+            
+            const alpha1 = num1 / (l1 * alpha_denom);
+            const alpha2 = num2 / (l2 * alpha_denom);
+            
+            state.omega1 += alpha1 * dt;
+            state.omega2 += alpha2 * dt;
+            state.theta1 += state.omega1 * dt;
+            state.theta2 += state.omega2 * dt;
+        }
+        
+        function calculateEnergy() {
+            const { l1, l2, m1, m2, g } = params;
+            const { theta1, theta2, omega1, omega2 } = state;
+            
+            // Height of masses
+            const h1 = -l1 * Math.cos(theta1);
+            const h2 = h1 - l2 * Math.cos(theta2);
+            
+            // Potential energy
+            const pe = m1 * g * h1 + m2 * g * h2;
+            
+            // Velocities
+            const v1x = l1 * omega1 * Math.cos(theta1);
+            const v1y = -l1 * omega1 * Math.sin(theta1);
+            const v2x = v1x + l2 * omega2 * Math.cos(theta2);
+            const v2y = v1y - l2 * omega2 * Math.sin(theta2);
+            
+            const v1sq = v1x * v1x + v1y * v1y;
+            const v2sq = v2x * v2x + v2y * v2y;
+            
+            // Kinetic energy
+            const ke = 0.5 * m1 * v1sq + 0.5 * m2 * v2sq;
+            
+            return pe + ke;
+        }
+        
+        function draw() {
+            // Clear
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const pos = getPositions();
+            
+            // Add to trail
+            trail.push({ x: pos.x2, y: pos.y2 });
+            if (trail.length > maxTrail) trail.shift();
+            
+            // Draw trail
+            if (trail.length > 1) {
+                ctx.strokeStyle = 'rgba(100, 150, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let i = 0; i < trail.length; i++) {
+                    const alpha = i / trail.length;
+                    ctx.globalAlpha = alpha * 0.5;
+                    ctx.beginPath();
+                    ctx.arc(trail[i].x, trail[i].y, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(100, 150, 255, 0.5)';
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
+            
+            // Draw arms
+            ctx.strokeStyle = '#6af';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+            
+            // Arm 1
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.lineTo(pos.x1, pos.y1);
+            ctx.stroke();
+            
+            // Arm 2
+            ctx.beginPath();
+            ctx.moveTo(pos.x1, pos.y1);
+            ctx.lineTo(pos.x2, pos.y2);
+            ctx.stroke();
+            
+            // Draw masses
+            const r1 = Math.sqrt(params.m1) * 12;
+            const r2 = Math.sqrt(params.m2) * 12;
+            
+            // Mass 1
+            ctx.fillStyle = '#8af';
+            ctx.beginPath();
+            ctx.arc(pos.x1, pos.y1, r1, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Mass 2
+            ctx.fillStyle = '#48f';
+            ctx.beginPath();
+            ctx.arc(pos.x2, pos.y2, r2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Pivot
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw angle guides when dragging
+            if (isDragging) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(cx, cy + 100);
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(pos.x1, pos.y1);
+                ctx.lineTo(pos.x1, pos.y1 + 80);
+                ctx.stroke();
+                
+                ctx.setLineDash([]);
+            }
+        }
+        
+        function animate() {
+            if (!isDragging) {
+                // Multiple physics steps per frame for stability
+                const steps = 4;
+                const dt = params.dt / steps;
+                for (let i = 0; i < steps; i++) {
+                    const oldDt = params.dt;
+                    params.dt = dt;
+                    stepPhysics();
+                    params.dt = oldDt;
+                }
+            }
+            
+            draw();
+            
+            // Update stats
+            const energy = calculateEnergy();
+            document.getElementById('stats').textContent = 
+                `Energy: ${energy.toFixed(2)} J | θ₁: ${state.theta1.toFixed(2)}, θ₂: ${state.theta2.toFixed(2)}`;
+            
+            requestAnimationFrame(animate);
+        }
+        
+        // Event listeners
+        function updateParams() {
+            params.l1 = parseFloat(document.getElementById('l1').value) || 1;
+            params.l2 = parseFloat(document.getElementById('l2').value) || 1;
+            params.m1 = parseFloat(document.getElementById('m1').value) || 1;
+            params.m2 = parseFloat(document.getElementById('m2').value) || 1;
+            params.g = parseFloat(document.getElementById('g').value) || 9.81;
+            params.dt = parseFloat(document.getElementById('dt').value) || 0.016;
+        }
+        
+        ['l1', 'l2', 'm1', 'm2', 'g', 'dt'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateParams);
+        });
+        
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            state = {
+                theta1: Math.PI / 1.5,
+                theta2: Math.PI / 2,
+                omega1: 0,
+                omega2: 0
+            };
+            trail = [];
+        });
+        
+        document.getElementById('randomBtn').addEventListener('click', () => {
+            state = {
+                theta1: (Math.random() - 0.5) * Math.PI * 2,
+                theta2: (Math.random() - 0.5) * Math.PI * 2,
+                omega1: (Math.random() - 0.5) * 2,
+                omega2: (Math.random() - 0.5) * 2
+            };
+            trail = [];
+        });
+        
+        // Mouse interaction
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            const pos = getPositions();
+            const d1 = Math.hypot(x - pos.x1, y - pos.y1);
+            const d2 = Math.hypot(x - pos.x2, y - pos.y2);
+            
+            if (d1 < 30 || d2 < 30) {
+                isDragging = true;
+                dragTarget = d1 < d2 ? 1 : 2;
+            }
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+            
+            if (dragTarget === 1) {
+                state.theta1 = Math.atan2(x - cx, y - cy);
+                state.omega1 = 0;
+            } else {
+                const pos = getPositions();
+                const x1 = pos.x1;
+                const y1 = pos.y1;
+                state.theta2 = Math.atan2(x - x1, y - y1);
+                state.omega2 = 0;
+            }
+            
+            trail = [];
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+            dragTarget = null;
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+            dragTarget = null;
+        });
+        
+        // Start
+        animate();
+    </script>
+</body>
+</html>
