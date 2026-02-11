@@ -10,6 +10,10 @@ An interactive WebGL-based visualization tool for exploring the chaotic behavior
 
 This tool generates "chaos maps" that visualize how quickly two nearly identical double pendulums diverge from each other. Each pixel in the map represents a different initial condition, and the color indicates how many iterations it took for the two pendulums to diverge beyond a threshold.
 
+![Example Chaos Map](assets/chaos-map-example.png)
+
+*Example chaos map showing θ₁ vs θ₂. Colors indicate divergence rate - warmer colors (yellow/green) diverge quickly (chaotic), cooler colors (blue/purple) take longer to diverge.*
+
 ---
 
 ## Double Pendulum Equations of Motion
