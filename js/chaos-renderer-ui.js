@@ -4,7 +4,7 @@
 // Event Listeners setup
 ChaosMapRenderer.prototype.setupEventListeners = function() {
     // Base parameter inputs
-    const inputs = ['g', 'dt', 'maxIter', 'threshold'];
+    const inputs = ['dt', 'maxIter', 'threshold'];
     inputs.forEach(id => {
         const el = document.getElementById(id + 'Input');
         if (el) {
@@ -159,6 +159,17 @@ ChaosMapRenderer.prototype.setupStackEditorListeners = function() {
         });
     }
     
+    // Delta mode checkbox
+    const deltaModeCheckbox = document.getElementById('deltaModeCheckbox');
+    if (deltaModeCheckbox) {
+        deltaModeCheckbox.addEventListener('change', (e) => {
+            this.layerCreationState.deltaMode = e.target.checked;
+            if (this.layerCreationState.pinPosition) {
+                this.renderPreviewAtPin();
+            }
+        });
+    }
+    
     // Range inputs - update state and preview
     const rangeInputs = ['xMin', 'xMax', 'yMin', 'yMax'];
     rangeInputs.forEach(id => {
@@ -284,13 +295,13 @@ ChaosMapRenderer.prototype.saveLayer = function() {
         return;
     }
     
-    // Compute the basis state at the pin position
-    const basisState = this.stack.computeState(state.pinPosition.nx, state.pinPosition.ny);
+    // Compute the basis state at the pin position (flip Y to match shader coordinate system)
+    const basisState = this.stack.computeState(state.pinPosition.nx, 1 - state.pinPosition.ny);
     const sampledPoint = new SampledPoint(basisState);
     
-    // Create layer with custom dimensions and ranges
+    // Create layer with custom dimensions, ranges, and delta mode
     const newLayer = new TransformLayer(state.xDim, state.yDim, 
-        state.xMin, state.xMax, state.yMin, state.yMax);
+        state.xMin, state.xMax, state.yMin, state.yMax, state.deltaMode);
     
     // Add to stack
     this.stack.items.push(sampledPoint);
@@ -315,6 +326,7 @@ ChaosMapRenderer.prototype.cancelLayerCreation = function() {
         xMax: 3.14,
         yMin: -3.14,
         yMax: 3.14,
+        deltaMode: false,
         pinPosition: null,
         isPlacingPin: false
     };
@@ -322,6 +334,8 @@ ChaosMapRenderer.prototype.cancelLayerCreation = function() {
     // Reset UI
     document.getElementById('xDimSelect').value = 'theta1';
     document.getElementById('yDimSelect').value = 'theta2';
+    const deltaModeCheckbox = document.getElementById('deltaModeCheckbox');
+    if (deltaModeCheckbox) deltaModeCheckbox.checked = false;
     this.updateDefaultRanges();
     
     const placePinBtn = document.getElementById('placePinBtn');
@@ -340,7 +354,7 @@ ChaosMapRenderer.prototype.cancelLayerCreation = function() {
 
 // Parameter and config methods
 ChaosMapRenderer.prototype.updateBaseParams = function() {
-    this.baseParams.g = parseFloat(document.getElementById('gInput').value) || 9.81;
+    this.baseParams.g = 9.81;
     this.baseParams.dt = parseFloat(document.getElementById('dtInput').value) || 0.01;
     this.baseParams.maxIter = parseInt(document.getElementById('maxIterInput').value) || 5000;
     this.baseParams.threshold = parseFloat(document.getElementById('thresholdInput').value) || 0.5;
@@ -442,26 +456,28 @@ ChaosMapRenderer.prototype.updatePerturbConfigFromUI = function() {
 ChaosMapRenderer.prototype.computePerturbedState = function(baseState) {
     const mode = this.baseParams.perturbMode;
     
+    // Box-Muller for normal distribution
+    const randn = () => {
+        const u1 = Math.random();
+        const u2 = Math.random();
+        const r = Math.sqrt(-2 * Math.log(u1 + 0.0001));
+        const theta = 2 * Math.PI * u2;
+        return r * Math.cos(theta);
+    };
+    
     if (mode === 'random') {
-        // Random mode: sample from Gaussian for each dimension
+        // Random mode: sample from Gaussian around baseState + center offset
+        // This matches the chaos map shader: s2 = s1 + center + random * std
         const pr = this.baseParams.perturbRandom;
-        // Box-Muller for normal distribution
-        const randn = () => {
-            const u1 = Math.random();
-            const u2 = Math.random();
-            const r = Math.sqrt(-2 * Math.log(u1 + 0.0001));
-            const theta = 2 * Math.PI * u2;
-            return r * Math.cos(theta);
-        };
         return {
-            theta1: pr.theta1.center + randn() * pr.theta1.std,
-            theta2: pr.theta2.center + randn() * pr.theta2.std,
-            omega1: pr.omega1.center + randn() * pr.omega1.std,
-            omega2: pr.omega2.center + randn() * pr.omega2.std,
-            l1: Math.max(0.1, pr.l1.center + randn() * pr.l1.std),
-            l2: Math.max(0.1, pr.l2.center + randn() * pr.l2.std),
-            m1: Math.max(0.1, pr.m1.center + randn() * pr.m1.std),
-            m2: Math.max(0.1, pr.m2.center + randn() * pr.m2.std)
+            theta1: baseState.theta1 + pr.theta1.center + randn() * pr.theta1.std,
+            theta2: baseState.theta2 + pr.theta2.center + randn() * pr.theta2.std,
+            omega1: baseState.omega1 + pr.omega1.center + randn() * pr.omega1.std,
+            omega2: baseState.omega2 + pr.omega2.center + randn() * pr.omega2.std,
+            l1: Math.max(0.1, baseState.l1 + pr.l1.center + randn() * pr.l1.std),
+            l2: Math.max(0.1, baseState.l2 + pr.l2.center + randn() * pr.l2.std),
+            m1: Math.max(0.1, baseState.m1 + pr.m1.center + randn() * pr.m1.std),
+            m2: Math.max(0.1, baseState.m2 + pr.m2.center + randn() * pr.m2.std)
         };
     } else {
         // Fixed mode: add fixed offsets

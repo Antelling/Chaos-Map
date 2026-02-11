@@ -125,6 +125,50 @@
             text-transform: uppercase;
             letter-spacing: 1px;
         }
+        
+        .panel-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            transition: color 0.2s ease;
+        }
+        
+        .panel-header:hover {
+            color: #ccc;
+        }
+        
+        .panel-toggle {
+            font-size: 0.7rem;
+            color: #666;
+            transition: transform 0.2s ease, color 0.2s ease;
+            display: inline-block;
+            width: 1rem;
+            text-align: center;
+        }
+        
+        .panel-header:hover .panel-toggle {
+            color: #888;
+        }
+        
+        .panel.collapsed .panel-toggle {
+            transform: rotate(-90deg);
+        }
+        
+        .panel-content {
+            overflow: hidden;
+            transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease;
+            max-height: 2000px;
+            opacity: 1;
+        }
+        
+        .panel.collapsed .panel-content {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0;
+        }
 
         .form-group {
             display: flex;
@@ -690,18 +734,17 @@
 <body>
     <div class="main-container">
         <div class="sidebar">
-            <!-- Base Parameters -->
-            <div class="panel">
-                <h3>Pendulum Parameters</h3>
-                <div class="form-group">
-                    <label>Gravity (g)</label>
-                    <input type="number" id="gInput" value="9.81" step="0.1">
-                </div>
-            </div>
-
             <!-- Simulation Settings -->
             <div class="panel">
-                <h3>Simulation Settings</h3>
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Simulation Settings</h3>
+                <div class="panel-content">
+                <div class="form-group">
+                    <label>Integrator</label>
+                    <select id="integratorSelect">
+                        <option value="rk4">RK4 (Runge-Kutta 4)</option>
+                        <option value="verlet" selected>Verlet (Symplectic)</option>
+                    </select>
+                </div>
                 <div class="form-group">
                     <label>Time Step (dt)</label>
                     <input type="number" id="dtInput" value="0.002" step="0.001" min="0.001">
@@ -724,34 +767,13 @@
                 <div id="perturbConfigPanel" style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.1);">
                     <!-- Dynamic perturbation inputs will be inserted here -->
                 </div>
-                <div class="form-group">
-                    <label>Integrator</label>
-                    <select id="integratorSelect">
-                        <option value="rk4">RK4 (Runge-Kutta 4)</option>
-                        <option value="verlet" selected>Verlet (Symplectic)</option>
-                    </select>
                 </div>
-            </div>
-
-            <!-- Map Settings -->
-            <div class="panel">
-                <h3>Map Settings</h3>
-                <div class="form-group">
-                    <label>Map Resolution</label>
-                    <select id="resolutionSelect">
-                        <option value="256">256 x 256 (Fast)</option>
-                        <option value="512">512 x 512</option>
-                        <option value="1024" selected>1024 x 1024</option>
-                        <option value="2048">2048 x 2048</option>
-                        <option value="4096">4096 x 4096 (Slow)</option>
-                    </select>
-                </div>
-                <div class="stats" id="renderStats"></div>
             </div>
 
             <!-- Color Mapping -->
             <div class="panel">
-                <h3>Color Mapping</h3>
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Color Mapping</h3>
+                <div class="panel-content">
                 <div class="form-group">
                     <label>Tone Mapping</label>
                     <select id="colorMappingSelect">
@@ -784,22 +806,77 @@
                     </select>
                 </div>
                 <div class="legend">
-                    <span id="legendFast">Fast</span>
-                    <div class="legend-gradient" id="legendGradient"></div>
                     <span id="legendSlow">Slow</span>
+                    <div class="legend-gradient" id="legendGradient"></div>
+                    <span id="legendFast">Fast</span>
+                </div>
+                </div>
+            </div>
+
+            <!-- Pendulum Preview -->
+            <div class="panel">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Pendulum Simulation</h3>
+                <div class="panel-content">
+                <div class="preview-box">
+                    <div class="preview-header">
+                        <span class="preview-title" id="pendulumPreviewTitle">Hover map to preview</span>
+                    </div>
+                    <div class="simulation-controls" style="padding: 0.5rem; background: rgba(255,255,255,0.05);">
+                        <button class="sim-btn" id="pinSimBtn" style="background: rgba(100, 200, 100, 0.2); border-color: rgba(100, 200, 100, 0.3); color: #8f8;">📍 Pin Sim
+                        </button>
+                        <button class="sim-btn" id="clearPinsBtn">❌ Clear All</button>
+                    </div>
+                    <div id="simulationContainer" class="simulation-container">
+                        <!-- Hover preview pane (always present) -->
+                        <div class="sim-pane hover-pane" id="hoverPane">
+                            <div class="sim-pane-header">
+                                <span class="sim-pane-title" id="hoverPaneTitle">Preview</span>
+                            </div>
+                            <div class="preview-canvas-container">
+                                <canvas id="pendulumPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
+                            </div>
+                        </div>
+                        <!-- Permanent simulations will be added here -->
+                    </div>
+                    <div style="padding: 0.4rem; background: rgba(255,255,255,0.03);">
+                        <label style="font-size: 0.7rem; color: #888; display: flex; justify-content: space-between;">
+                            <span>Sim Speed</span>
+                            <span id="speedValue" style="color: #6af; font-family: monospace;">1x</span>
+                        </label>
+                        <input type="range" id="simSpeedSlider" min="1" max="20" value="1" step="1" style="width: 100%; accent-color: #6af;">
+                    </div>
+                </div>
                 </div>
             </div>
 
             <!-- Transformation Stack -->
             <div class="panel">
-                <h3>Transformation Stack</h3>
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Transformation Stack</h3>
+                <div class="panel-content">
                 <div class="stack-list" id="stackList">
                     <!-- Stack items inserted here -->
+                </div>
+                
+                <!-- Layer Editor (for editing selected points/layers) -->
+                <div class="layer-editor" id="layerEditor" style="display: none;">
+                    <div class="editor-title" id="editorTitle"></div>
+                    <div id="editorParams"></div>
                 </div>
                 
                 <!-- Layer Creation Workflow -->
                 <div id="layerCreationPanel" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.1);">
                     <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">Add New Layer:</div>
+                    
+                    <!-- Delta Mode Toggle -->
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.7rem;">
+                            <input type="checkbox" id="deltaModeCheckbox" style="width: auto;">
+                            <span>Delta mode (Δ) - add to basis state</span>
+                        </label>
+                        <div style="font-size: 0.65rem; color: #666; margin-left: 1.1rem; margin-top: 0.1rem;">
+                            When checked, output values are added to the sampled state instead of replacing it
+                        </div>
+                    </div>
                     
                     <!-- X Dimension -->
                     <div class="form-group" style="margin-bottom: 0.4rem;">
@@ -849,16 +926,13 @@
                         📍 Pin at (<span id="pinPosX">0.50</span>, <span id="pinPosY">0.50</span>)
                     </div>
                 </div>
-                
-                <div class="layer-editor" id="layerEditor" style="display: none;">
-                    <div class="editor-title" id="editorTitle"></div>
-                    <div id="editorParams"></div>
                 </div>
             </div>
 
             <!-- Layer Preview (shows preview at pin location) -->
             <div class="panel" id="previewPanel" style="display: none;">
-                <h3>Layer Preview</h3>
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Layer Preview</h3>
+                <div class="panel-content">
                 <div class="preview-box">
                     <div class="preview-canvas-container" style="width: 256px; height: 256px; margin: 0 auto;">
                         <canvas id="layerPreviewCanvas" width="256" height="256"></canvas>
@@ -873,51 +947,24 @@
                 <button id="cancelLayerBtn" class="btn btn-danger" style="width: 100%; margin-top: 0.3rem; font-size: 0.75rem; padding: 0.4rem;">
                     Cancel
                 </button>
-            </div>
-
-            <!-- Pendulum Preview -->
-            <div class="panel">
-                <h3>Pendulum Simulation</h3>
-                <div class="preview-box">
-                    <div class="preview-header">
-                        <span class="preview-title" id="pendulumPreviewTitle">Hover map to preview</span>
-                    </div>
-                    <div class="simulation-controls" style="padding: 0.5rem; background: rgba(255,255,255,0.05);">
-                        <button class="sim-btn" id="pinSimBtn" style="background: rgba(100, 200, 100, 0.2); border-color: rgba(100, 200, 100, 0.3); color: #8f8;">📍 Pin Sim
-                        </button>
-                        <button class="sim-btn" id="clearPinsBtn">❌ Clear All</button>
-                    </div>
-                    <div id="simulationContainer" class="simulation-container">
-                        <!-- Hover preview pane (always present) -->
-                        <div class="sim-pane hover-pane" id="hoverPane">
-                            <div class="sim-pane-header">
-                                <span class="sim-pane-title" id="hoverPaneTitle">Preview</span>
-                            </div>
-                            <div class="preview-canvas-container">
-                                <canvas id="pendulumPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
-                            </div>
-                        </div>
-                        <!-- Permanent simulations will be added here -->
-                    </div>
-                    <div style="padding: 0.4rem; background: rgba(255,255,255,0.03);">
-                        <label style="font-size: 0.7rem; color: #888; display: flex; justify-content: space-between;">
-                            <span>Sim Speed</span>
-                            <span id="speedValue" style="color: #6af; font-family: monospace;">1x</span>
-                        </label>
-                        <input type="range" id="simSpeedSlider" min="1" max="20" value="1" step="1" style="width: 100%; accent-color: #6af;">
-                    </div>
                 </div>
             </div>
         </div>
 
         <div class="main-content">
             <div class="top-bar">
-                <span class="mode-indicator">Layer-Based Transform Pipeline</span>
+                <select id="resolutionSelect" style="padding: 0.35rem 0.5rem; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; color: #fff; font-size: 0.8rem;">
+                    <option value="256">256 x 256 (Fast)</option>
+                    <option value="512">512 x 512</option>
+                    <option value="1024" selected>1024 x 1024</option>
+                    <option value="2048">2048 x 2048</option>
+                    <option value="4096">4096 x 4096 (Slow)</option>
+                </select>
                 <div class="zoom-controls">
                     <button id="zoomOutBtn" class="zoom-btn" title="Right-click map to zoom out">− Zoom Out</button>
                 </div>
-                <button id="downloadBtn" class="btn" style="margin-left: 0.5rem;">💾 Download Image</button>
-                <button id="generateBtn" class="btn">Generate Chaos Map</button>
+                <button id="downloadBtn" class="btn">💾 Download Image</button>
+                <button id="generateBtn" class="btn">Redraw</button>
             </div>
             <div class="map-wrapper">
                 <div class="map-container" id="mapContainer">
@@ -1175,6 +1222,7 @@
         uniform float u_centerX;
         uniform float u_centerY;
         uniform ivec2 u_mappedDims; // Which dimensions are being mapped
+        uniform bool u_deltaMode; // When true, add output to basis state instead of replacing
         
         const float PI = 3.14159265359;
         const int MAX_ITERATIONS = 10000;
@@ -1432,23 +1480,24 @@
             
             // Apply output values based on which dimensions are mapped
             // For angles, we use the output directly (already in radians)
-            if (dim1 == 0) s1.theta1 = outX;
-            else if (dim1 == 1) s1.theta2 = outX;
-            else if (dim1 == 2) s1.omega1 = outX;
-            else if (dim1 == 3) s1.omega2 = outX;
-            else if (dim1 == 4) localL1 = max(0.1, outX);
-            else if (dim1 == 5) localL2 = max(0.1, outX);
-            else if (dim1 == 6) localM1 = max(0.1, outX);
-            else if (dim1 == 7) localM2 = max(0.1, outX);
+            // In delta mode, add to the basis state instead of replacing
+            if (dim1 == 0) s1.theta1 = u_deltaMode ? u_fixedState.x + outX : outX;
+            else if (dim1 == 1) s1.theta2 = u_deltaMode ? u_fixedState.y + outX : outX;
+            else if (dim1 == 2) s1.omega1 = u_deltaMode ? u_fixedState.z + outX : outX;
+            else if (dim1 == 3) s1.omega2 = u_deltaMode ? u_fixedState.w + outX : outX;
+            else if (dim1 == 4) localL1 = max(0.1, u_deltaMode ? u_l1 + outX : outX);
+            else if (dim1 == 5) localL2 = max(0.1, u_deltaMode ? u_l2 + outX : outX);
+            else if (dim1 == 6) localM1 = max(0.1, u_deltaMode ? u_m1 + outX : outX);
+            else if (dim1 == 7) localM2 = max(0.1, u_deltaMode ? u_m2 + outX : outX);
             
-            if (dim2 == 0) s1.theta1 = outY;
-            else if (dim2 == 1) s1.theta2 = outY;
-            else if (dim2 == 2) s1.omega1 = outY;
-            else if (dim2 == 3) s1.omega2 = outY;
-            else if (dim2 == 4) localL1 = max(0.1, outY);
-            else if (dim2 == 5) localL2 = max(0.1, outY);
-            else if (dim2 == 6) localM1 = max(0.1, outY);
-            else if (dim2 == 7) localM2 = max(0.1, outY);
+            if (dim2 == 0) s1.theta1 = u_deltaMode ? u_fixedState.x + outY : outY;
+            else if (dim2 == 1) s1.theta2 = u_deltaMode ? u_fixedState.y + outY : outY;
+            else if (dim2 == 2) s1.omega1 = u_deltaMode ? u_fixedState.z + outY : outY;
+            else if (dim2 == 3) s1.omega2 = u_deltaMode ? u_fixedState.w + outY : outY;
+            else if (dim2 == 4) localL1 = max(0.1, u_deltaMode ? u_l1 + outY : outY);
+            else if (dim2 == 5) localL2 = max(0.1, u_deltaMode ? u_l2 + outY : outY);
+            else if (dim2 == 6) localM1 = max(0.1, u_deltaMode ? u_m1 + outY : outY);
+            else if (dim2 == 7) localM2 = max(0.1, u_deltaMode ? u_m2 + outY : outY);
             
             s2 = s1;
             
@@ -1574,7 +1623,7 @@
     <!-- Split JavaScript modules -->
     <script src="js/constants.js"></script>
     <script src="js/transform.js"></script>
-    <script src="js/pendulum-sim.js"></script>
+    <script src="js/pendulum-sim-gpu.js"></script>
     <script src="js/chaos-renderer.js"></script>
     <script src="js/chaos-renderer-ui.js"></script>
     <script src="js/chaos-renderer-stack.js"></script>
