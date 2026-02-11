@@ -4,7 +4,8 @@
 // Update the hover preview pane (top one) with current hover state
 ChaosMapRenderer.prototype.updateHoverPreview = function(nx, ny) {
     // Compute the state at this position
-    const state = this.stack.computeState(nx, ny);
+    // Flip Y to match shader coordinate system (shader uses flipped Y for noise sampling)
+    const state = this.stack.computeState(nx, 1 - ny);
     
     // Update hover preview state
     this.hoverPreviewState = { ...state };
@@ -16,8 +17,34 @@ ChaosMapRenderer.prototype.updateHoverPreview = function(nx, ny) {
         title.textContent = `Preview (${nx.toFixed(2)}, ${ny.toFixed(2)})`;
     }
     
-    // Initialize or reset GPU simulation
-    this.initHoverGPUSim(state);
+    // Only reinitialize simulation if state has actually changed significantly
+    // This prevents constant reset during mouse hover
+    if (!this.hoverGPUSim || this.hasStateChangedSignificantly(state, this.lastHoverSimState)) {
+        this.initHoverGPUSim(state);
+        this.lastHoverSimState = { ...state };
+    }
+};
+
+// Check if state has changed enough to warrant simulation reinitialization
+ChaosMapRenderer.prototype.hasStateChangedSignificantly = function(newState, oldState) {
+    if (!oldState) return true;
+    
+    // Use a smaller threshold for more responsive hover updates
+    // Angle threshold: ~0.006 degrees (very sensitive)
+    // Length/mass threshold: 0.1% change
+    const angleThreshold = 0.0001;
+    const paramThreshold = 0.001;
+    
+    return (
+        Math.abs(newState.theta1 - oldState.theta1) > angleThreshold ||
+        Math.abs(newState.theta2 - oldState.theta2) > angleThreshold ||
+        Math.abs(newState.omega1 - oldState.omega1) > angleThreshold ||
+        Math.abs(newState.omega2 - oldState.omega2) > angleThreshold ||
+        Math.abs(newState.l1 - oldState.l1) > paramThreshold ||
+        Math.abs(newState.l2 - oldState.l2) > paramThreshold ||
+        Math.abs(newState.m1 - oldState.m1) > paramThreshold ||
+        Math.abs(newState.m2 - oldState.m2) > paramThreshold
+    );
 };
 
 // Initialize GPU simulation for hover preview
@@ -38,7 +65,14 @@ ChaosMapRenderer.prototype.initHoverGPUSim = function(state) {
         // Create perturbed state
         const perturbedState = this.computePerturbedState(state);
         
-        // Create new GPU simulation
+        // Debug: verify states are different
+        console.log('Creating sim:', {
+            s1: {t1: state.theta1.toFixed(6), t2: state.theta2.toFixed(6)},
+            s2: {t1: perturbedState.theta1.toFixed(6), t2: perturbedState.theta2.toFixed(6)},
+            diff: (perturbedState.theta1 - state.theta1).toExponential(2)
+        });
+        
+        // Use GPUPendulumSimulation (CPU physics + WebGL rendering)
         this.hoverGPUSim = new GPUPendulumSimulation(this.pendulumPreviewCanvas, {
             g: this.baseParams.g,
             dt: this.baseParams.dt,
@@ -59,26 +93,39 @@ ChaosMapRenderer.prototype.initHoverGPUSim = function(state) {
                 theta2: perturbedState.theta2,
                 omega1: perturbedState.omega1,
                 omega2: perturbedState.omega2
-            },
-            perturb: this.baseParams.perturbFixed
+            }
         });
         
         // Start animation loop
         this.animateHoverGPUSim();
     } catch (e) {
-        console.error('Failed to initialize GPU simulation:', e);
-        // Fall back to CPU rendering
-        this.drawInPreviewPane(this.pendulumPreviewCanvas, this.hoverPreviewState, this.hoverPerturbedState);
+        console.error('Failed to initialize simulation:', e);
     }
 };
 
-// Animation loop for hover GPU simulation
+// Animation loop for hover simulation
 ChaosMapRenderer.prototype.animateHoverGPUSim = function() {
-    if (!this.hoverGPUSim) return;
+    if (!this.hoverGPUSim) {
+        this.hoverAnimationId = null;
+        return;
+    }
+    
+    // Check if WebGL context is valid
+    if (this.hoverGPUSim.gl.isContextLost()) {
+        this.hoverAnimationId = null;
+        return;
+    }
     
     // Step and render
-    this.hoverGPUSim.step(this.pendulumSimSpeed);
-    this.hoverGPUSim.render();
+    try {
+        this.hoverGPUSim.step(this.pendulumSimSpeed);
+        this.hoverGPUSim.render();
+    } catch (e) {
+        console.error('Error in hover simulation:', e);
+        this.hoverGPUSim = null;
+        this.hoverAnimationId = null;
+        return;
+    }
     
     // Continue animation
     this.hoverAnimationId = requestAnimationFrame(() => this.animateHoverGPUSim());
@@ -138,8 +185,8 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
         this.removePinnedSimulation(this.pinnedSimulations[0].id);
     }
     
-    // Compute state
-    const state = this.stack.computeState(nx, ny);
+    // Compute state (flip Y to match shader coordinate system)
+    const state = this.stack.computeState(nx, 1 - ny);
     const perturbedState = this.computePerturbedState(state);
     
     // Create simulation object
@@ -170,7 +217,7 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
     sim.canvas = sim.element.querySelector('canvas');
     
     try {
-        // Create GPU simulation
+        // Create simulation (CPU physics + WebGL rendering)
         sim.gpuSim = new GPUPendulumSimulation(sim.canvas, {
             g: this.baseParams.g,
             dt: this.baseParams.dt,
@@ -191,16 +238,13 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
                 theta2: perturbedState.theta2,
                 omega1: perturbedState.omega1,
                 omega2: perturbedState.omega2
-            },
-            perturb: this.baseParams.perturbFixed
+            }
         });
         
         // Store in map
         this.pinnedGPUSims.set(sim.id, sim.gpuSim);
     } catch (e) {
-        console.error('Failed to create GPU simulation:', e);
-        // Fall back to CPU-based simulation
-        this.setupPinnedSimulationWebGL(sim);
+        console.error('Failed to create simulation:', e);
     }
     
     // Add to array
@@ -237,40 +281,6 @@ ChaosMapRenderer.prototype.createPinnedSimulationElement = function(sim) {
     });
     
     return div;
-};
-
-// Setup WebGL context for a pinned simulation
-ChaosMapRenderer.prototype.setupPinnedSimulationWebGL = function(sim) {
-    if (!sim.canvas) return;
-    
-    sim.gl = sim.canvas.getContext('webgl', {
-        antialias: true,
-        preserveDrawingBuffer: true
-    });
-    
-    if (!sim.gl) {
-        console.error('WebGL not supported for pinned simulation');
-        return;
-    }
-    
-    const gl = sim.gl;
-    
-    // Use the shader scripts from HTML
-    const vsEl = document.getElementById('pendulum-preview-vertex-shader');
-    const fsEl = document.getElementById('pendulum-preview-fragment-shader');
-    const vsSource = vsEl ? vsEl.textContent : null;
-    const fsSource = fsEl ? fsEl.textContent : null;
-    
-    if (!vsSource || !fsSource) return;
-    
-    const vs = this.createShader(gl, gl.VERTEX_SHADER, vsSource);
-    const fs = this.createShader(gl, gl.FRAGMENT_SHADER, fsSource);
-    
-    if (!vs || !fs) return;
-    
-    sim.program = this.createProgram(gl, vs, fs);
-    sim.trailBuffer = gl.createBuffer();
-    sim.positionBuffer = gl.createBuffer();
 };
 
 // Remove a pinned simulation
@@ -320,84 +330,44 @@ ChaosMapRenderer.prototype.updatePinnedSimulationTitle = function() {
 
 // Animate a pinned simulation
 ChaosMapRenderer.prototype.animatePinnedSimulation = function(sim) {
+    // Check if simulation still exists
+    const stillExists = this.pinnedSimulations.find(s => s.id === sim.id);
+    if (!stillExists) {
+        sim.animationId = null;
+        return;
+    }
+    
     const steps = this.pendulumSimSpeed;
     
-    // Use GPU simulation if available
+    // Use CPU-based simulation
     if (sim.gpuSim) {
-        // Step GPU simulation
-        sim.gpuSim.step(steps);
-        
-        // Render
-        sim.gpuSim.render();
-        
-        // Update status
-        const statusEl = document.getElementById(`status-${sim.id}`);
-        if (statusEl) {
-            if (sim.gpuSim.diverged) {
-                statusEl.textContent = `Diverged at t=${sim.gpuSim.divergenceTime}`;
-                statusEl.style.color = '#f88';
-            } else {
-                statusEl.textContent = `t=${sim.gpuSim.frameCount}`;
-                statusEl.style.color = '#8f8';
+        try {
+            // Step simulation
+            sim.gpuSim.step(steps);
+            
+            // Render
+            sim.gpuSim.render();
+            
+            // Update status
+            const statusEl = document.getElementById(`status-${sim.id}`);
+            if (statusEl) {
+                if (sim.gpuSim.diverged) {
+                    statusEl.textContent = `Diverged at t=${sim.gpuSim.divergenceTime}`;
+                    statusEl.style.color = '#f88';
+                } else {
+                    statusEl.textContent = `t=${sim.gpuSim.frameCount}`;
+                    statusEl.style.color = '#8f8';
+                }
             }
+        } catch (e) {
+            console.error(`Error in pinned simulation ${sim.id}:`, e);
+            // Stop animation on error
+            return;
         }
-    } else {
-        // Fallback to CPU simulation
-        this.animatePinnedSimulationCPU(sim, steps);
     }
     
     // Continue animation
     sim.animationId = requestAnimationFrame(() => this.animatePinnedSimulation(sim));
 };
 
-// CPU fallback for pinned simulation animation
-ChaosMapRenderer.prototype.animatePinnedSimulationCPU = function(sim, steps) {
-    let diverged = false;
-    
-    // Get base state (lengths and masses)
-    const baseState = this.stack.computeState(sim.nx, sim.ny);
-    
-    for (let i = 0; i < steps; i++) {
-        // Step physics (GPU-side only - uses RK4 for preview)
-        sim.state = this.stepPhysicsRK4OnGPU(sim.state, baseState.l1, baseState.l2, baseState.m1, baseState.m2);
-        sim.perturbedState = this.stepPhysicsRK4OnGPU(sim.perturbedState, baseState.l1, baseState.l2, baseState.m1, baseState.m2);
-        
-        // Check for divergence
-        if (!diverged && sim.divergenceTime === null) {
-            const dist = this.measureDivergence(sim.state, sim.perturbedState);
-            if (dist > this.baseParams.threshold) {
-                sim.divergenceTime = sim.trail.length;
-                diverged = true;
-            }
-        }
-    }
-    
-    // Add to trail
-    const x1 = baseState.l1 * Math.sin(sim.state.theta1);
-    const y1 = baseState.l1 * Math.cos(sim.state.theta1);
-    const x2 = x1 + baseState.l2 * Math.sin(sim.state.theta2);
-    const y2 = y1 + baseState.l2 * Math.cos(sim.state.theta2);
-    
-    sim.trail.push({ x1, y1, x2, y2 });
-    if (sim.trail.length > 400) {
-        sim.trail.shift();
-    }
-    
-    // Draw
-    if (sim.gl && sim.program) {
-        this.drawInWebGLContext(sim.gl, sim.program, sim.positionBuffer, sim.trailBuffer, sim.state, sim.perturbedState, sim.trail, baseState);
-    }
-    
-    // Update status
-    const statusEl = document.getElementById(`status-${sim.id}`);
-    if (statusEl) {
-        if (sim.divergenceTime !== null) {
-            statusEl.textContent = `Diverged at t=${sim.divergenceTime}`;
-            statusEl.style.color = '#f88';
-        } else {
-            const time = sim.trail.length;
-            statusEl.textContent = `t=${time}`;
-            statusEl.style.color = '#8f8';
-        }
-    }
-};
+

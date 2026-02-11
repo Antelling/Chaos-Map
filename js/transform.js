@@ -2,7 +2,7 @@
 
 // A Layer maps (x,y) to output values on two dimensions
 class TransformLayer {
-    constructor(dim1, dim2, min1, max1, min2, max2) {
+    constructor(dim1, dim2, min1, max1, min2, max2, deltaMode = false) {
         this.id = Date.now() + Math.random().toString(36).substr(2, 9);
         this.type = 'layer';
         
@@ -18,6 +18,7 @@ class TransformLayer {
             this.max1 = arguments[2] !== undefined ? arguments[2] : defaults.max1;
             this.min2 = arguments[3] !== undefined ? arguments[3] : defaults.min2;
             this.max2 = arguments[4] !== undefined ? arguments[4] : defaults.max2;
+            this.deltaMode = arguments[5] !== undefined ? arguments[5] : false;
         } else {
             // New format: individual dimensions
             this.dim1 = dim1 || 'theta1';
@@ -27,6 +28,7 @@ class TransformLayer {
             this.max1 = max1 !== undefined ? max1 : 3.14;
             this.min2 = min2 !== undefined ? min2 : -3.14;
             this.max2 = max2 !== undefined ? max2 : 3.14;
+            this.deltaMode = deltaMode;
         }
     }
     
@@ -37,11 +39,28 @@ class TransformLayer {
     }
     
     // Compute output for a given viewport position (nx, ny in [0,1])
-    // Linear transform: viewport [0,1] maps to [min, max]
-    computeOutput(nx, ny) {
-        // Linear interpolation from viewport [0,1] to [min, max]
-        const val1 = this.min1 + nx * (this.max1 - this.min1);
-        const val2 = this.min2 + ny * (this.max2 - this.min2);
+    // MUST be numerically identical to the shader's coordinate mapping:
+    //   outX = centerX + (nx * 2.0 - 1.0) * scaleX
+    // where centerX = (min + max) / 2, scaleX = (max - min) / 2
+    // 
+    // basisState is required when deltaMode is true - it provides the base values to add to
+    computeOutput(nx, ny, basisState = null) {
+        // Use exact same math as shader for numerical consistency
+        const centerX = (this.min1 + this.max1) / 2;
+        const scaleX = (this.max1 - this.min1) / 2;
+        const centerY = (this.min2 + this.max2) / 2;
+        const scaleY = (this.max2 - this.min2) / 2;
+        
+        let val1 = centerX + (nx * 2.0 - 1.0) * scaleX;
+        let val2 = centerY + (ny * 2.0 - 1.0) * scaleY;
+        
+        // In delta mode, add to basis state values
+        if (this.deltaMode && basisState) {
+            const basisVal1 = basisState[this.dim1] ?? 0;
+            const basisVal2 = basisState[this.dim2] ?? 0;
+            val1 = basisVal1 + val1;
+            val2 = basisVal2 + val2;
+        }
         
         return {
             [this.dim1]: val1,
@@ -59,16 +78,17 @@ class TransformLayer {
             min1: this.min1,
             max1: this.max1,
             min2: this.min2,
-            max2: this.max2
+            max2: this.max2,
+            deltaMode: this.deltaMode
         };
     }
     
     static deserialize(data) {
         if (data.dim1 && data.dim2) {
-            return new TransformLayer(data.dim1, data.dim2, data.min1, data.max1, data.min2, data.max2);
+            return new TransformLayer(data.dim1, data.dim2, data.min1, data.max1, data.min2, data.max2, data.deltaMode);
         }
         // Legacy support
-        return new TransformLayer(data.layerType, data.min1, data.max1, data.min2, data.max2);
+        return new TransformLayer(data.layerType, data.min1, data.max1, data.min2, data.max2, data.deltaMode);
     }
 }
 
@@ -84,10 +104,16 @@ class SampledPoint {
         return `📍 Sampled State`;
     }
     
-    // Format state for display
+    // Format state for display (compact 2-line version for UI)
     getStateDisplay() {
         const s = this.state;
-        return `θ₁=${s.theta1.toFixed(2)} θ₂=${s.theta2.toFixed(2)} ω₁=${s.omega1.toFixed(2)} ω₂=${s.omega2.toFixed(2)} L₁=${s.l1.toFixed(2)} L₂=${s.l2.toFixed(2)} m₁=${s.m1.toFixed(2)} m₂=${s.m2.toFixed(2)}`;
+        return `θ₁=${s.theta1.toFixed(2)} θ₂=${s.theta2.toFixed(2)} ω₁=${s.omega1.toFixed(2)} ω₂=${s.omega2.toFixed(2)} | L₁=${s.l1.toFixed(2)} L₂=${s.l2.toFixed(2)} m₁=${s.m1.toFixed(2)} m₂=${s.m2.toFixed(2)}`;
+    }
+    
+    // Get a shorter display for the stack list
+    getShortDisplay() {
+        const s = this.state;
+        return `θ:${s.theta1.toFixed(1)},${s.theta2.toFixed(1)} ω:${s.omega1.toFixed(1)},${s.omega2.toFixed(1)}`;
     }
     
     serialize() {
@@ -205,7 +231,8 @@ class TransformationStack {
         
         if (!layer) return { ...basis };
         
-        const output = layer.computeOutput(nx, ny);
+        // Pass basis state for delta mode calculation
+        const output = layer.computeOutput(nx, ny, basis);
         if (!output) return { ...basis };
         
         const result = { ...basis };
@@ -223,13 +250,15 @@ class TransformationStack {
     
     // Compute what the state would be if we added a new layer at position (nx, ny)
     // Used for preview before actually adding
-    computePreviewState(layerType, nx, ny) {
+    computePreviewState(layerType, nx, ny, deltaMode = false) {
         // First compute state at position using current top layer (this would be the new sampled point)
         const basisState = this.computeState(nx, ny);
         
         // Create a temporary layer to see what values it would output at center (0.5, 0.5)
         const tempLayer = new TransformLayer(layerType);
-        const output = tempLayer.computeOutput(0.5, 0.5);
+        tempLayer.deltaMode = deltaMode;
+        // Pass basis state for delta mode calculation
+        const output = tempLayer.computeOutput(0.5, 0.5, basisState);
         
         const result = { ...basisState };
         if (output) {
@@ -250,10 +279,15 @@ class TransformationStack {
             return {
                 mode: 0,
                 fixedState: [0, 0, 0, 0],
+                scaleX: 3.14,  // Default theta range is -PI to PI
+                scaleY: 3.14,
+                centerX: 0,
+                centerY: 0,
                 l1: basis.l1,
                 l2: basis.l2,
                 m1: basis.m1,
-                m2: basis.m2
+                m2: basis.m2,
+                layerDims: ['theta1', 'theta2']
             };
         }
         
@@ -283,30 +317,23 @@ class TransformationStack {
         const scaleX = (layer.max1 - layer.min1) / 2;
         const scaleY = (layer.max2 - layer.min2) / 2;
         
+        // Always populate fixedState with the full basis state (theta1, theta2, omega1, omega2)
+        // The shader uses these as the base values before applying layer transformations
+        fixedState[0] = basis.theta1;
+        fixedState[1] = basis.theta2;
+        fixedState[2] = basis.omega1;
+        fixedState[3] = basis.omega2;
+        
         if (hasTheta1 || hasTheta2) {
             mode = 0; // Position mode
-            fixedState[0] = basis.theta1;
-            fixedState[1] = basis.theta2;
         } else if (hasOmega1 || hasOmega2) {
             mode = 1; // Velocity mode
-            fixedState[0] = basis.theta1;
-            fixedState[1] = basis.theta2;
-            fixedState[2] = basis.omega1;
-            fixedState[3] = basis.omega2;
         } else if (hasL1 || hasL2) {
             mode = 2; // Length mode
-            fixedState[0] = basis.theta1;
-            fixedState[1] = basis.theta2;
-            fixedState[2] = basis.omega1;
-            fixedState[3] = basis.omega2;
             if (hasL1) outL1 = basis.l1;
             if (hasL2) outL2 = basis.l2;
         } else if (hasM1 || hasM2) {
             mode = 3; // Mass mode
-            fixedState[0] = basis.theta1;
-            fixedState[1] = basis.theta2;
-            fixedState[2] = basis.omega1;
-            fixedState[3] = basis.omega2;
             if (hasM1) outM1 = basis.m1;
             if (hasM2) outM2 = basis.m2;
         }
@@ -322,7 +349,8 @@ class TransformationStack {
             l2: outL2,
             m1: outM1,
             m2: outM2,
-            layerDims: [dim1, dim2]
+            layerDims: [dim1, dim2],
+            deltaMode: layer.deltaMode
         };
     }
     
