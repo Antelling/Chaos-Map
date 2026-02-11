@@ -41,6 +41,7 @@ class ChaosMapRenderer {
             xMax: 3.14,
             yMin: -3.14,
             yMax: 3.14,
+            deltaMode: false,  // When true, add to basis state instead of replacing
             pinPosition: null,  // {nx, ny} when placed
             isPlacingPin: false
         };

@@ -22,8 +22,8 @@ ChaosMapRenderer.prototype.handleMapHover = function(e) {
         this.schedulePreviewRender(nx, ny);
     }
     
-    // Compute state through stack
-    const state = this.stack.computeState(nx, ny);
+    // Compute state through stack (flip Y to match shader coordinate system)
+    const state = this.stack.computeState(nx, 1 - ny);
     
     // Update hover info
     this.updateHoverInfo(state);
@@ -61,7 +61,8 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     const yDim = state.yDim;
     
     // Compute the basis state at this position (for fixed values)
-    const basisState = this.stack.computeState(nx, ny);
+    // Flip Y to match shader coordinate system
+    const basisState = this.stack.computeState(nx, 1 - ny);
     
     // Determine mode and fixed state based on which dimensions are being mapped
     let mode = 0;
@@ -117,39 +118,48 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     const centerX = (state.xMin + state.xMax) / 2;
     const centerY = (state.yMin + state.yMax) / 2;
     
+    // Helper to safely set uniforms
+    const setUniform = (name, setter, ...values) => {
+        const loc = gl.getUniformLocation(program, name);
+        if (loc !== null) {
+            setter.call(gl, loc, ...values);
+        }
+    };
+    
     // Set uniforms
-    gl.uniform2f(gl.getUniformLocation(program, 'u_resolution'), width, height);
-    gl.uniform2f(gl.getUniformLocation(program, 'u_tileOffset'), 0, 0);
-    gl.uniform2f(gl.getUniformLocation(program, 'u_tileSize'), width, height);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_l1'), outL1);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_l2'), outL2);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_m1'), outM1);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_m2'), outM2);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_g'), this.baseParams.g);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_dt'), this.baseParams.dt);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_maxIter'), this.baseParams.maxIter);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), this.baseParams.threshold);
+    setUniform('u_resolution', gl.uniform2f, width, height);
+    setUniform('u_tileOffset', gl.uniform2f, 0, 0);
+    setUniform('u_tileSize', gl.uniform2f, width, height);
+    setUniform('u_l1', gl.uniform1f, outL1 ?? 1.0);
+    setUniform('u_l2', gl.uniform1f, outL2 ?? 1.0);
+    setUniform('u_m1', gl.uniform1f, outM1 ?? 1.0);
+    setUniform('u_m2', gl.uniform1f, outM2 ?? 1.0);
+    setUniform('u_g', gl.uniform1f, this.baseParams.g);
+    setUniform('u_dt', gl.uniform1f, this.baseParams.dt);
+    setUniform('u_maxIter', gl.uniform1i, this.baseParams.maxIter);
+    setUniform('u_threshold', gl.uniform1f, this.baseParams.threshold);
+    
     // Perturbation uniforms
     const pFixed = this.baseParams.perturbFixed;
     const pRand = this.baseParams.perturbRandom;
-    gl.uniform4f(gl.getUniformLocation(program, 'u_perturbFixedAB'), 
+    setUniform('u_perturbFixedAB', gl.uniform4f, 
         pFixed.theta1, pFixed.theta2, pFixed.omega1, pFixed.omega2);
-    gl.uniform4f(gl.getUniformLocation(program, 'u_perturbFixedCD'), 
+    setUniform('u_perturbFixedCD', gl.uniform4f, 
         pFixed.l1, pFixed.l2, pFixed.m1, pFixed.m2);
-    gl.uniform4f(gl.getUniformLocation(program, 'u_perturbCenterAB'), 
+    setUniform('u_perturbCenterAB', gl.uniform4f, 
         pRand.theta1.center, pRand.theta2.center, pRand.omega1.center, pRand.omega2.center);
-    gl.uniform4f(gl.getUniformLocation(program, 'u_perturbCenterCD'), 
+    setUniform('u_perturbCenterCD', gl.uniform4f, 
         pRand.l1.center, pRand.l2.center, pRand.m1.center, pRand.m2.center);
-    gl.uniform4f(gl.getUniformLocation(program, 'u_perturbStdAB'), 
+    setUniform('u_perturbStdAB', gl.uniform4f, 
         pRand.theta1.std, pRand.theta2.std, pRand.omega1.std, pRand.omega2.std);
-    gl.uniform4f(gl.getUniformLocation(program, 'u_perturbStdCD'), 
+    setUniform('u_perturbStdCD', gl.uniform4f, 
         pRand.l1.std, pRand.l2.std, pRand.m1.std, pRand.m2.std);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_perturbMode'), this.baseParams.perturbMode === 'random' ? 1 : 0);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_integrator'), this.baseParams.integrator === 'verlet' ? 1 : 0);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_seed'), 0);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_colorMapping'), this.colorMapping);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_cyclePeriod'), this.cyclePeriod);
-    gl.uniform1i(gl.getUniformLocation(program, 'u_hueMapping'), this.hueMapping);
+    setUniform('u_perturbMode', gl.uniform1i, this.baseParams.perturbMode === 'random' ? 1 : 0);
+    setUniform('u_integrator', gl.uniform1i, this.baseParams.integrator === 'verlet' ? 1 : 0);
+    setUniform('u_seed', gl.uniform1f, 0);
+    setUniform('u_colorMapping', gl.uniform1i, this.colorMapping);
+    setUniform('u_cyclePeriod', gl.uniform1f, this.cyclePeriod);
+    setUniform('u_hueMapping', gl.uniform1i, this.hueMapping);
     
     // Generate and bind per-render noise texture for truly independent random perturbations
     // Preview is always 256x256
@@ -157,21 +167,24 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     if (noiseTex) {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, noiseTex);
-        gl.uniform1i(gl.getUniformLocation(program, 'u_noiseTexture'), 0);
+        setUniform('u_noiseTexture', gl.uniform1i, 0);
     }
     
     // Layer-based uniforms
-    gl.uniform1i(gl.getUniformLocation(program, 'u_layerMode'), mode);
-    gl.uniform4f(gl.getUniformLocation(program, 'u_fixedState'), 
-        fixedState[0], fixedState[1], fixedState[2], fixedState[3]);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_scaleX'), scaleX);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_scaleY'), scaleY);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_centerX'), centerX);
-    gl.uniform1f(gl.getUniformLocation(program, 'u_centerY'), centerY);
+    setUniform('u_layerMode', gl.uniform1i, mode);
+    setUniform('u_fixedState', gl.uniform4f, 
+        fixedState[0] ?? 0, fixedState[1] ?? 0, fixedState[2] ?? 0, fixedState[3] ?? 0);
+    setUniform('u_scaleX', gl.uniform1f, scaleX);
+    setUniform('u_scaleY', gl.uniform1f, scaleY);
+    setUniform('u_centerX', gl.uniform1f, centerX);
+    setUniform('u_centerY', gl.uniform1f, centerY);
     
     // Which dimensions are being mapped
     const dimToIndex = { theta1: 0, theta2: 1, omega1: 2, omega2: 3, l1: 4, l2: 5, m1: 6, m2: 7 };
-    gl.uniform2i(gl.getUniformLocation(program, 'u_mappedDims'), dimToIndex[xDim], dimToIndex[yDim]);
+    setUniform('u_mappedDims', gl.uniform2i, dimToIndex[xDim] ?? 0, dimToIndex[yDim] ?? 1);
+    
+    // Delta mode: add to basis state instead of replacing
+    setUniform('u_deltaMode', gl.uniform1i, state.deltaMode ? 1 : 0);
     
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     
@@ -180,9 +193,10 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     if (previewInfo) {
         const xDimInfo = DIM_INFO[xDim];
         const yDimInfo = DIM_INFO[yDim];
+        const deltaBadge = state.deltaMode ? '<span style="color: #fc8;"> [Δ mode]</span>' : '';
         previewInfo.innerHTML = `
             <span>Pin at (${nx.toFixed(2)}, ${ny.toFixed(2)})</span>
-            <span style="color: #8af;">${xDimInfo.label}: [${state.xMin.toFixed(1)}, ${state.xMax.toFixed(1)}] ${yDimInfo.label}: [${state.yMin.toFixed(1)}, ${state.yMax.toFixed(1)}]</span>
+            <span style="color: #8af;">${xDimInfo.label}: [${state.xMin.toFixed(1)}, ${state.xMax.toFixed(1)}] ${yDimInfo.label}: [${state.yMin.toFixed(1)}, ${state.yMax.toFixed(1)}]${deltaBadge}</span>
         `;
     }
 };
@@ -266,8 +280,8 @@ ChaosMapRenderer.prototype.handleMapMouseMove = function(e) {
         this.schedulePreviewRender(nx, ny);
     }
     
-    // Compute state through stack
-    const state = this.stack.computeState(nx, ny);
+    // Compute state through stack (flip Y to match shader coordinate system)
+    const state = this.stack.computeState(nx, 1 - ny);
     
     // Update hover info
     this.updateHoverInfo(state);
