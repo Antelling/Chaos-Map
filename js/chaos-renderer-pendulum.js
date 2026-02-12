@@ -46,7 +46,7 @@ ChaosMapRenderer.prototype.updateHoverPreview = function(nx, ny) {
 ChaosMapRenderer.prototype.renderStaticHoverPreview = function(state, perturbedState) {
     // If already animating, don't override
     if (this.hoverAnimationId) return;
-    
+
     try {
         // Create a temporary simulation just for one frame
         const tempSim = new CPUPendulumSimulation(this.pendulumPreviewCanvas, {
@@ -56,22 +56,11 @@ ChaosMapRenderer.prototype.renderStaticHoverPreview = function(state, perturbedS
             l2: state.l2,
             m1: state.m1,
             m2: state.m2,
-
             threshold: this.baseParams.threshold,
-            initialState1: {
-                theta1: state.theta1,
-                theta2: state.theta2,
-                omega1: state.omega1,
-                omega2: state.omega2
-            },
-            initialState2: {
-                theta1: perturbedState.theta1,
-                theta2: perturbedState.theta2,
-                omega1: perturbedState.omega1,
-                omega2: perturbedState.omega2
-            }
+            initialState1: state,
+            initialState2: perturbedState
         });
-        
+
         // Render one frame
         tempSim.render();
     } catch (e) {
@@ -119,18 +108,8 @@ ChaosMapRenderer.prototype.initHoverCPUSim = function(state, perturbedState) {
             energyCanvas: energyCanvas,
             energyTimeCanvas: energyTimeCanvas,
             threshold: this.baseParams.threshold,
-            initialState1: {
-                theta1: state.theta1,
-                theta2: state.theta2,
-                omega1: state.omega1,
-                omega2: state.omega2
-            },
-            initialState2: {
-                theta1: perturbedState.theta1,
-                theta2: perturbedState.theta2,
-                omega1: perturbedState.omega1,
-                omega2: perturbedState.omega2
-            }
+            initialState1: state,
+            initialState2: perturbedState
         });
         
         // Initial render before starting animation
@@ -257,22 +236,11 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
             l2: state.l2,
             m1: state.m1,
             m2: state.m2,
-
             threshold: this.baseParams.threshold,
-            initialState1: {
-                theta1: state.theta1,
-                theta2: state.theta2,
-                omega1: state.omega1,
-                omega2: state.omega2
-            },
-            initialState2: {
-                theta1: perturbedState.theta1,
-                theta2: perturbedState.theta2,
-                omega1: perturbedState.omega1,
-                omega2: perturbedState.omega2
-            }
+            initialState1: state,
+            initialState2: perturbedState
         });
-        
+
         // Initial render
         sim.cpuSim.render();
     } catch (e) {
