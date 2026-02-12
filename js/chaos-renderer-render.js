@@ -266,6 +266,8 @@ ChaosMapRenderer.prototype.generateMapGPU = async function(res, loading, progres
             // Render tile and read back pixels immediately (streaming)
             const imageData = await this.renderTileToImageData(tileOffsetX, tileOffsetY, actualTileW, actualTileH);
             
+            if (!imageData) continue;
+            
             // Draw directly to main canvas at scaled position
             const scaleX = this.canvas.width / res;
             const scaleY = this.canvas.height / res;
@@ -274,24 +276,24 @@ ChaosMapRenderer.prototype.generateMapGPU = async function(res, loading, progres
             const drawW = actualTileW * scaleX;
             const drawH = actualTileH * scaleY;
             
-            // Create temp canvas for this tile
+            // Draw directly to main canvas
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = actualTileW;
             tempCanvas.height = actualTileH;
             const tempCtx = tempCanvas.getContext('2d');
             tempCtx.putImageData(imageData, 0, 0);
-            
-            // Draw to main canvas
             this.mainCtx.drawImage(tempCanvas, drawX, drawY, drawW, drawH);
             
             tileCount++;
             const progress = (tileCount / totalTiles) * 100;
             if (progressFill) progressFill.style.width = progress + '%';
             
-            // Yield to UI
-            if (tileCount % 2 === 0) {
-                await new Promise(r => requestAnimationFrame(r));
-            }
+            // Force browser paint by waiting for next animation frame
+            await new Promise(r => requestAnimationFrame(r));
+            
+            // Optional: Small delay to make streaming visible at high resolutions
+            // Uncomment below to see tiles appear one by one:
+            // await new Promise(r => setTimeout(r, 10));
         }
     }
 };
