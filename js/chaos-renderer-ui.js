@@ -35,7 +35,20 @@ ChaosMapRenderer.prototype.setupEventListeners = function() {
     if (resSelect) {
         resSelect.addEventListener('change', (e) => {
             this.baseParams.resolution = parseInt(e.target.value);
+            // Update CPU renderer resolution if it exists
+            if (this.cpuChaosRenderer) {
+                this.cpuChaosRenderer.resolution = this.baseParams.resolution;
+            }
             this.resizeCanvas();
+        });
+    }
+    
+    // Render mode (GPU vs CPU)
+    const renderModeSelect = document.getElementById('renderModeSelect');
+    if (renderModeSelect) {
+        renderModeSelect.addEventListener('change', (e) => {
+            this.renderMode = e.target.value;
+            if (!this.isRendering) this.generateMap();
         });
     }
     

@@ -74,6 +74,12 @@ class ChaosMapRenderer {
         this.hueMapping = 0;
         this.cyclePeriod = 500;
         
+        // Render mode: 'gpu' or 'cpu'
+        this.renderMode = 'gpu';
+        
+        // CPU-based chaos map renderer (64-bit precision)
+        this.cpuChaosRenderer = null;
+        
         // Pendulum simulation
         this.pendulumSimSpeed = 5;
         
@@ -107,6 +113,17 @@ class ChaosMapRenderer {
         this.setupWebGL();
         this.setupTileWebGL();
         this.setupPreviewWebGL();
+        
+        // Initialize CPU renderer for high-precision mode
+        this.cpuChaosRenderer = new CPUChaosMapRenderer(this.baseParams.resolution);
+        this.cpuChaosRenderer.maxIter = this.baseParams.maxIter;
+        this.cpuChaosRenderer.threshold = this.baseParams.threshold;
+        this.cpuChaosRenderer.dt = this.baseParams.dt;
+        this.cpuChaosRenderer.g = this.baseParams.g;
+        this.cpuChaosRenderer.integrator = this.baseParams.integrator;
+        this.cpuChaosRenderer.colorMapping = this.colorMapping;
+        this.cpuChaosRenderer.cyclePeriod = this.cyclePeriod;
+        this.cpuChaosRenderer.hueMapping = this.hueMapping;
 
         this.setupEventListeners();
         this.resizeCanvas();

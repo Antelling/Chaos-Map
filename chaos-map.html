@@ -984,6 +984,10 @@
                     <option value="2048">2048 x 2048</option>
                     <option value="4096">4096 x 4096 (Slow)</option>
                 </select>
+                <select id="renderModeSelect" style="padding: 0.35rem 0.5rem; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; color: #fff; font-size: 0.8rem;">
+                    <option value="gpu">GPU (WebGL - Fast)</option>
+                    <option value="cpu">CPU (64-bit Precision)</option>
+                </select>
                 <div class="zoom-controls">
                     <button id="zoomOutBtn" class="zoom-btn" title="Right-click map to zoom out">− Zoom Out</button>
                 </div>
@@ -1464,6 +1468,7 @@
     <!-- Split JavaScript modules -->
     <script src="js/constants.js"></script>
     <script src="js/transform.js"></script>
+    <script src="js/chaos-renderer-cpu.js"></script>
     <script src="js/pendulum-sim-cpu.js"></script>
     <script src="js/chaos-renderer.js"></script>
     <script src="js/chaos-renderer-ui.js"></script>
