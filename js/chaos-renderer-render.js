@@ -240,20 +240,18 @@ ChaosMapRenderer.prototype.generateMap = async function() {
     this.isRendering = false;
 };
 
-// GPU-based map generation (original WebGL implementation)
+// GPU-based map generation with streaming tile display
 ChaosMapRenderer.prototype.generateMapGPU = async function(res, loading, progressFill) {
     const tileSize = this.baseParams.tileSize;
     const tilesX = Math.ceil(res / tileSize);
     const tilesY = Math.ceil(res / tileSize);
     const totalTiles = tilesX * tilesY;
     
-    // Create offscreen canvas for compositing
-    const offCanvas = document.createElement('canvas');
-    offCanvas.width = res;
-    offCanvas.height = res;
-    const offCtx = offCanvas.getContext('2d');
+    // Clear main canvas at start
+    this.mainCtx.fillStyle = '#0a0a0a';
+    this.mainCtx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     
-    // Generate tiles
+    // Generate tiles with streaming display
     let tileCount = 0;
     
     for (let ty = 0; ty < tilesY; ty++) {
@@ -265,25 +263,37 @@ ChaosMapRenderer.prototype.generateMapGPU = async function(res, loading, progres
             const actualTileW = Math.min(tileSize, res - tileOffsetX);
             const actualTileH = Math.min(tileSize, res - tileOffsetY);
             
-            await this.renderTile(tileOffsetX, tileOffsetY, actualTileW, actualTileH);
+            // Render tile and read back pixels immediately (streaming)
+            const imageData = await this.renderTileToImageData(tileOffsetX, tileOffsetY, actualTileW, actualTileH);
             
-            // Copy tile to offscreen canvas
-            offCtx.drawImage(this.tileCanvas, tileOffsetX, tileOffsetY);
+            // Draw directly to main canvas at scaled position
+            const scaleX = this.canvas.width / res;
+            const scaleY = this.canvas.height / res;
+            const drawX = tileOffsetX * scaleX;
+            const drawY = tileOffsetY * scaleY;
+            const drawW = actualTileW * scaleX;
+            const drawH = actualTileH * scaleY;
+            
+            // Create temp canvas for this tile
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = actualTileW;
+            tempCanvas.height = actualTileH;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            // Draw to main canvas
+            this.mainCtx.drawImage(tempCanvas, drawX, drawY, drawW, drawH);
             
             tileCount++;
             const progress = (tileCount / totalTiles) * 100;
             if (progressFill) progressFill.style.width = progress + '%';
             
             // Yield to UI
-            if (tileCount % 4 === 0) {
+            if (tileCount % 2 === 0) {
                 await new Promise(r => requestAnimationFrame(r));
             }
         }
     }
-    
-    // Copy to main canvas
-    this.mainCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.mainCtx.drawImage(offCanvas, 0, 0);
 };
 
 // CPU-based map generation (64-bit double precision via WebWorkers)
@@ -485,6 +495,127 @@ ChaosMapRenderer.prototype.renderTile = function(offsetX, offsetY, width, height
     setUniform('u_deltaMode', gl.uniform1i, shaderParams.deltaMode ? 1 : 0);
     
     gl.drawArrays(gl.TRIANGLES, 0, 6);
+};
+
+// Render a tile and return ImageData for streaming display
+ChaosMapRenderer.prototype.renderTileToImageData = async function(offsetX, offsetY, width, height) {
+    const gl = this.tileGl;
+    const program = this.tileProgram;
+    if (!gl || !program) return null;
+    
+    // Check for context loss
+    if (gl.isContextLost()) {
+        console.warn('WebGL context lost, skipping tile render');
+        return null;
+    }
+    
+    // Helper to safely set uniforms
+    const setUniform = (name, setter, ...values) => {
+        const loc = gl.getUniformLocation(program, name);
+        if (loc !== null) {
+            setter.call(gl, loc, ...values);
+        }
+    };
+    
+    // Ensure tile canvas matches requested size
+    if (this.tileCanvas.width !== width || this.tileCanvas.height !== height) {
+        this.tileCanvas.width = width;
+        this.tileCanvas.height = height;
+    }
+    
+    gl.viewport(0, 0, width, height);
+    gl.useProgram(program);
+    
+    // Get shader parameters from stack
+    const shaderParams = this.stack.getShaderParams();
+    const res = this.baseParams.resolution;
+    
+    // Set uniforms
+    setUniform('u_resolution', gl.uniform2f, res, res);
+    setUniform('u_tileOffset', gl.uniform2f, offsetX, offsetY);
+    setUniform('u_tileSize', gl.uniform2f, width, height);
+    setUniform('u_l1', gl.uniform1f, shaderParams.l1 ?? 1.0);
+    setUniform('u_l2', gl.uniform1f, shaderParams.l2 ?? 1.0);
+    setUniform('u_m1', gl.uniform1f, shaderParams.m1 ?? 1.0);
+    setUniform('u_m2', gl.uniform1f, shaderParams.m2 ?? 1.0);
+    setUniform('u_g', gl.uniform1f, this.baseParams.g);
+    setUniform('u_dt', gl.uniform1f, this.baseParams.dt);
+    setUniform('u_maxIter', gl.uniform1i, this.baseParams.maxIter);
+    setUniform('u_threshold', gl.uniform1f, this.baseParams.threshold);
+    
+    // Perturbation uniforms
+    const pFixed = this.baseParams.perturbFixed;
+    const pRand = this.baseParams.perturbRandom;
+    setUniform('u_perturbFixedAB', gl.uniform4f, 
+        pFixed.theta1, pFixed.theta2, pFixed.omega1, pFixed.omega2);
+    setUniform('u_perturbFixedCD', gl.uniform4f, 
+        pFixed.l1, pFixed.l2, pFixed.m1, pFixed.m2);
+    setUniform('u_perturbCenterAB', gl.uniform4f, 
+        pRand.theta1.center, pRand.theta2.center, pRand.omega1.center, pRand.omega2.center);
+    setUniform('u_perturbCenterCD', gl.uniform4f, 
+        pRand.l1.center, pRand.l2.center, pRand.m1.center, pRand.m2.center);
+    setUniform('u_perturbStdAB', gl.uniform4f, 
+        pRand.theta1.std, pRand.theta2.std, pRand.omega1.std, pRand.omega2.std);
+    setUniform('u_perturbStdCD', gl.uniform4f, 
+        pRand.l1.std, pRand.l2.std, pRand.m1.std, pRand.m2.std);
+    setUniform('u_perturbMode', gl.uniform1i, this.baseParams.perturbMode === 'random' ? 1 : 0);
+    setUniform('u_integrator', gl.uniform1i, this.baseParams.integrator === 'verlet' ? 1 : 0);
+    setUniform('u_seed', gl.uniform1f, 0);
+    setUniform('u_colorMapping', gl.uniform1i, this.colorMapping);
+    setUniform('u_cyclePeriod', gl.uniform1f, this.cyclePeriod);
+    setUniform('u_hueMapping', gl.uniform1i, this.hueMapping);
+    
+    // Generate and bind per-tile noise texture
+    const noiseTex = this.updateNoiseTexture(gl, width, height);
+    if (noiseTex) {
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, noiseTex);
+        setUniform('u_noiseTexture', gl.uniform1i, 0);
+    }
+    
+    // Layer-based uniforms
+    setUniform('u_layerMode', gl.uniform1i, shaderParams.mode ?? 0);
+    setUniform('u_fixedState', gl.uniform4f, 
+        shaderParams.fixedState?.[0] ?? 0, shaderParams.fixedState?.[1] ?? 0,
+        shaderParams.fixedState?.[2] ?? 0, shaderParams.fixedState?.[3] ?? 0);
+    setUniform('u_scaleX', gl.uniform1f, shaderParams.scaleX ?? 3.14);
+    setUniform('u_scaleY', gl.uniform1f, shaderParams.scaleY ?? 3.14);
+    setUniform('u_centerX', gl.uniform1f, shaderParams.centerX ?? 0);
+    setUniform('u_centerY', gl.uniform1f, shaderParams.centerY ?? 0);
+    
+    // Which dimensions are being mapped
+    const dim1 = shaderParams.layerDims ? shaderParams.layerDims[0] : 'theta1';
+    const dim2 = shaderParams.layerDims ? shaderParams.layerDims[1] : 'theta2';
+    const dimToIndex = { theta1: 0, theta2: 1, omega1: 2, omega2: 3, l1: 4, l2: 5, m1: 6, m2: 7 };
+    setUniform('u_mappedDims', gl.uniform2i, dimToIndex[dim1] ?? 0, dimToIndex[dim2] ?? 1);
+    
+    // Delta mode
+    setUniform('u_deltaMode', gl.uniform1i, shaderParams.deltaMode ? 1 : 0);
+    
+    // Draw the tile
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    
+    // Read pixels back for streaming display
+    // Use a framebuffer to read from the tile canvas
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    
+    // Create ImageData (flip Y because WebGL has origin at bottom-left)
+    const imageData = new ImageData(width, height);
+    const data = imageData.data;
+    
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const srcIdx = ((height - 1 - y) * width + x) * 4;
+            const dstIdx = (y * width + x) * 4;
+            data[dstIdx] = pixels[srcIdx];
+            data[dstIdx + 1] = pixels[srcIdx + 1];
+            data[dstIdx + 2] = pixels[srcIdx + 2];
+            data[dstIdx + 3] = pixels[srcIdx + 3];
+        }
+    }
+    
+    return imageData;
 };
 
 // GPU-consistent RK4 integration - uses SAME physics as the shader
