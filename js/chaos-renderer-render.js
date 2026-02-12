@@ -286,26 +286,32 @@ ChaosMapRenderer.prototype.generateMapGPU = async function(res, loading, progres
     this.mainCtx.drawImage(offCanvas, 0, 0);
 };
 
-// CPU-based map generation (64-bit double precision)
+// CPU-based map generation (64-bit double precision via WebWorkers)
 ChaosMapRenderer.prototype.generateMapCPU = async function(res, loading, progressFill) {
     const tileSize = this.baseParams.tileSize;
     const tilesX = Math.ceil(res / tileSize);
     const tilesY = Math.ceil(res / tileSize);
     const totalTiles = tilesX * tilesY;
     
-    // Update CPU renderer settings
-    if (this.cpuChaosRenderer) {
-        this.cpuChaosRenderer.resolution = res;
-        this.cpuChaosRenderer.maxIter = this.baseParams.maxIter;
-        this.cpuChaosRenderer.threshold = this.baseParams.threshold;
-        this.cpuChaosRenderer.dt = this.baseParams.dt;
-        this.cpuChaosRenderer.g = this.baseParams.g;
-        this.cpuChaosRenderer.integrator = this.baseParams.integrator;
-        this.cpuChaosRenderer.colorMapping = this.colorMapping;
-        this.cpuChaosRenderer.cyclePeriod = this.cyclePeriod;
-        this.cpuChaosRenderer.hueMapping = this.hueMapping;
-        this.cpuChaosRenderer.perturbFixed = this.baseParams.perturbFixed;
+    // Initialize workers if needed
+    if (!this.cpuChaosRenderer || this.cpuChaosRenderer.workers.length === 0) {
+        this.cpuChaosRenderer = new CPUChaosMapRenderer(res);
     }
+    
+    // Update CPU renderer settings
+    this.cpuChaosRenderer.resolution = res;
+    this.cpuChaosRenderer.maxIter = this.baseParams.maxIter;
+    this.cpuChaosRenderer.threshold = this.baseParams.threshold;
+    this.cpuChaosRenderer.dt = this.baseParams.dt;
+    this.cpuChaosRenderer.g = this.baseParams.g;
+    this.cpuChaosRenderer.integrator = this.baseParams.integrator;
+    this.cpuChaosRenderer.colorMapping = this.colorMapping;
+    this.cpuChaosRenderer.cyclePeriod = this.cyclePeriod;
+    this.cpuChaosRenderer.hueMapping = this.hueMapping;
+    this.cpuChaosRenderer.perturbFixed = this.baseParams.perturbFixed;
+    
+    // Initialize worker pool
+    this.cpuChaosRenderer.initWorkers();
     
     // Create offscreen canvas for compositing
     const offCanvas = document.createElement('canvas');
@@ -316,7 +322,8 @@ ChaosMapRenderer.prototype.generateMapCPU = async function(res, loading, progres
     // Get shader parameters from stack
     const shaderParams = this.stack.getShaderParams();
     
-    // Generate tiles
+    // Queue all tiles for rendering
+    const tilePromises = [];
     let tileCount = 0;
     
     for (let ty = 0; ty < tilesY; ty++) {
@@ -328,35 +335,36 @@ ChaosMapRenderer.prototype.generateMapCPU = async function(res, loading, progres
             const actualTileW = Math.min(tileSize, res - tileOffsetX);
             const actualTileH = Math.min(tileSize, res - tileOffsetY);
             
-            // Render tile using CPU
-            const imageData = this.cpuChaosRenderer.renderTile(
+            // Create promise for each tile
+            const tilePromise = this.cpuChaosRenderer.renderTile(
                 tileOffsetX, tileOffsetY, actualTileW, actualTileH, shaderParams
-            );
+            ).then(imageData => {
+                // Put image data to offscreen canvas
+                offCtx.putImageData(imageData, tileOffsetX, tileOffsetY);
+                
+                tileCount++;
+                const progress = (tileCount / totalTiles) * 100;
+                if (progressFill) progressFill.style.width = progress + '%';
+                
+                // Yield to UI periodically
+                if (tileCount % 4 === 0) {
+                    return new Promise(r => requestAnimationFrame(r));
+                }
+            });
             
-            // Put image data to a temp canvas
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = actualTileW;
-            tempCanvas.height = actualTileH;
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.putImageData(imageData, 0, 0);
-            
-            // Copy to offscreen canvas
-            offCtx.drawImage(tempCanvas, tileOffsetX, tileOffsetY);
-            
-            tileCount++;
-            const progress = (tileCount / totalTiles) * 100;
-            if (progressFill) progressFill.style.width = progress + '%';
-            
-            // Yield to UI more frequently for CPU mode (slower)
-            if (tileCount % 2 === 0) {
-                await new Promise(r => requestAnimationFrame(r));
-            }
+            tilePromises.push(tilePromise);
         }
     }
+    
+    // Wait for all tiles to complete
+    await Promise.all(tilePromises);
     
     // Copy to main canvas
     this.mainCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.mainCtx.drawImage(offCanvas, 0, 0);
+    
+    // Cleanup workers
+    this.cpuChaosRenderer.terminateWorkers();
 };
 
 // Download the current chaos map as an image

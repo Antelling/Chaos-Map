@@ -57,6 +57,7 @@ ChaosMapRenderer.prototype.renderStaticHoverPreview = function(state, perturbedS
             m1: state.m1,
             m2: state.m2,
             threshold: this.baseParams.threshold,
+            integrator: this.baseParams.integrator,
             initialState1: state,
             initialState2: perturbedState
         });
@@ -108,6 +109,7 @@ ChaosMapRenderer.prototype.initHoverCPUSim = function(state, perturbedState) {
             energyCanvas: energyCanvas,
             energyTimeCanvas: energyTimeCanvas,
             threshold: this.baseParams.threshold,
+            integrator: this.baseParams.integrator,
             initialState1: state,
             initialState2: perturbedState
         });
@@ -237,6 +239,7 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
             m1: state.m1,
             m2: state.m2,
             threshold: this.baseParams.threshold,
+            integrator: this.baseParams.integrator,
             initialState1: state,
             initialState2: perturbedState
         });

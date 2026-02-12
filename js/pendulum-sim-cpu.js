@@ -25,6 +25,7 @@ class CPUPendulumSimulation {
         this.m2 = options.m2 || 1.0;
         this.threshold = options.threshold || 0.05;
         this.maxTrailLength = options.maxTrailLength || 2000;
+        this.integrator = options.integrator || 'verlet'; // 'verlet' or 'rk4'
         
         // Pre-compute mass sum for acceleration calculations
         this.M = this.m1 + this.m2;
@@ -149,6 +150,56 @@ class CPUPendulumSimulation {
         s.omega2 += halfDt * newAlpha2;
     }
     
+    // RK4 integrator - 4th order Runge-Kutta
+    stepRK4(s, l1, l2, m1, m2) {
+        const dt = this.dt;
+        
+        const k1 = this.computeDerivatives(s, l1, l2, m1, m2);
+        
+        const s2 = {
+            theta1: s.theta1 + 0.5 * dt * k1.dtheta1,
+            theta2: s.theta2 + 0.5 * dt * k1.dtheta2,
+            omega1: s.omega1 + 0.5 * dt * k1.domega1,
+            omega2: s.omega2 + 0.5 * dt * k1.domega2,
+            l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
+        };
+        const k2 = this.computeDerivatives(s2, l1, l2, m1, m2);
+        
+        const s3 = {
+            theta1: s.theta1 + 0.5 * dt * k2.dtheta1,
+            theta2: s.theta2 + 0.5 * dt * k2.dtheta2,
+            omega1: s.omega1 + 0.5 * dt * k2.domega1,
+            omega2: s.omega2 + 0.5 * dt * k2.domega2,
+            l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
+        };
+        const k3 = this.computeDerivatives(s3, l1, l2, m1, m2);
+        
+        const s4 = {
+            theta1: s.theta1 + dt * k3.dtheta1,
+            theta2: s.theta2 + dt * k3.dtheta2,
+            omega1: s.omega1 + dt * k3.domega1,
+            omega2: s.omega2 + dt * k3.domega2,
+            l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
+        };
+        const k4 = this.computeDerivatives(s4, l1, l2, m1, m2);
+        
+        s.theta1 += dt * (k1.dtheta1 + 2*k2.dtheta1 + 2*k3.dtheta1 + k4.dtheta1) / 6;
+        s.theta2 += dt * (k1.dtheta2 + 2*k2.dtheta2 + 2*k3.dtheta2 + k4.dtheta2) / 6;
+        s.omega1 += dt * (k1.domega1 + 2*k2.domega1 + 2*k3.domega1 + k4.domega1) / 6;
+        s.omega2 += dt * (k1.domega2 + 2*k2.domega2 + 2*k3.domega2 + k4.domega2) / 6;
+    }
+    
+    // Compute derivatives for RK4
+    computeDerivatives(s, l1, l2, m1, m2) {
+        const acc = this.computeAccelerations(s, l1, l2, m1, m2);
+        return {
+            dtheta1: s.omega1,
+            dtheta2: s.omega2,
+            domega1: acc.alpha1,
+            domega2: acc.alpha2
+        };
+    }
+    
     // Measure divergence between two states
     measureDivergence(s1, s2) {
         // Circular difference for angles
@@ -189,10 +240,12 @@ class CPUPendulumSimulation {
     
     // Step both pendulums forward
     step(steps = 1) {
+        const stepFn = this.integrator === 'rk4' ? this.stepRK4.bind(this) : this.stepVerlet.bind(this);
+        
         for (let i = 0; i < steps; i++) {
             // Step BOTH pendulums FIRST (must be at same time point for comparison)
-            this.stepVerlet(this.state1, this.l1, this.l2, this.m1, this.m2);
-            this.stepVerlet(this.state2, this.l1, this.l2, this.m1, this.m2);
+            stepFn(this.state1, this.l1, this.l2, this.m1, this.m2);
+            stepFn(this.state2, this.l1, this.l2, this.m1, this.m2);
             
             this.frameCount++;
             
@@ -618,6 +671,7 @@ class CPUPendulumSimulation {
         if (options.l2 !== undefined) this.l2 = options.l2;
         if (options.dt !== undefined) this.dt = options.dt;
         if (options.threshold !== undefined) this.threshold = options.threshold;
+        if (options.integrator !== undefined) this.integrator = options.integrator;
         
         // Recompute scale if lengths changed
         if (options.l1 !== undefined || options.l2 !== undefined) {
