@@ -453,13 +453,54 @@ ChaosMapRenderer.prototype.updatePerturbConfigFromUI = function() {
     }
 };
 
-ChaosMapRenderer.prototype.computePerturbedState = function(baseState) {
+// Simple hash function for deterministic randomness
+function hash32(x) {
+    let h = x >>> 0;
+    h = ((h >>> 16) ^ h) * 0x45d9f3b;
+    h = ((h >>> 16) ^ h) * 0x45d9f3b;
+    h = (h >>> 16) ^ h;
+    return h >>> 0;
+}
+
+// Hash 2D coordinates to a seed
+function hash2D(x, y, seed = 0) {
+    let h = seed >>> 0;
+    h = hash32(h + x);
+    h = hash32(h + y);
+    return h;
+}
+
+// LCG random number generator with a given seed
+function seededRandom(seed) {
+    let s = seed >>> 0;
+    return function() {
+        s = (s * 1664525 + 1013904223) >>> 0;
+        return s / 4294967296;
+    };
+}
+
+ChaosMapRenderer.prototype.computePerturbedState = function(baseState, normX, normY) {
     const mode = this.baseParams.perturbMode;
+    
+    // Determine if we should use deterministic (seeded) random
+    const useSeeded = (normX !== undefined && normY !== undefined);
+    const res = this.baseParams.resolution;
+    
+    // Generate pixel coordinates for seeding (matches GPU fragCoord)
+    let rand;
+    if (useSeeded) {
+        const pixelX = Math.floor(normX * res);
+        const pixelY = Math.floor(normY * res);
+        const seed = hash2D(pixelX, pixelY);
+        rand = seededRandom(seed);
+    } else {
+        rand = Math.random;
+    }
     
     // Box-Muller for normal distribution
     const randn = () => {
-        const u1 = Math.random();
-        const u2 = Math.random();
+        const u1 = rand();
+        const u2 = rand();
         const r = Math.sqrt(-2 * Math.log(u1 + 0.0001));
         const theta = 2 * Math.PI * u2;
         return r * Math.cos(theta);

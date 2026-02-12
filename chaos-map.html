@@ -472,6 +472,7 @@
         .sim-pane.hover-pane {
             border-color: rgba(100, 200, 255, 0.3);
             background: rgba(100, 200, 255, 0.05);
+            min-height: 200px;
         }
 
         .sim-pane.pinned-pane {
@@ -826,6 +827,13 @@
                         </button>
                         <button class="sim-btn" id="clearPinsBtn">❌ Clear All</button>
                     </div>
+                    <div style="padding: 0.4rem; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <label style="font-size: 0.7rem; color: #888; display: flex; justify-content: space-between;">
+                            <span>Sim Speed</span>
+                            <span id="speedValue" style="color: #6af; font-family: monospace;">5x</span>
+                        </label>
+                        <input type="range" id="simSpeedSlider" min="1" max="20" value="5" step="1" style="width: 100%; accent-color: #6af;">
+                    </div>
                     <div id="simulationContainer" class="simulation-container">
                         <!-- Hover preview pane (always present) -->
                         <div class="sim-pane hover-pane" id="hoverPane">
@@ -838,14 +846,30 @@
                         </div>
                         <!-- Permanent simulations will be added here -->
                     </div>
-                    <div style="padding: 0.4rem; background: rgba(255,255,255,0.03);">
-                        <label style="font-size: 0.7rem; color: #888; display: flex; justify-content: space-between;">
-                            <span>Sim Speed</span>
-                            <span id="speedValue" style="color: #6af; font-family: monospace;">1x</span>
-                        </label>
-                        <input type="range" id="simSpeedSlider" min="1" max="20" value="1" step="1" style="width: 100%; accent-color: #6af;">
-                    </div>
                 </div>
+                </div>
+            </div>
+
+            <!-- Energy Visualization -->
+            <div class="panel collapsed">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Energy View</h3>
+                <div class="panel-content">
+                    <div class="preview-box">
+                        <div class="preview-header">
+                            <span class="preview-title">PE vs KE (main pendulum)</span>
+                        </div>
+                        <div class="preview-canvas-container">
+                            <canvas id="energyCanvas" width="256" height="256"></canvas>
+                        </div>
+                    </div>
+                    <div class="preview-box" style="margin-top: 0.5rem;">
+                        <div class="preview-header">
+                            <span class="preview-title">Total Energy vs Time</span>
+                        </div>
+                        <div class="preview-canvas-container">
+                            <canvas id="energyTimeCanvas" width="256" height="256"></canvas>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1000,190 +1024,7 @@
         }
     </script>
 
-    <!-- Pendulum Preview Shaders -->
-    <script id="pendulum-preview-vertex-shader" type="x-shader/x-vertex">
-        attribute vec2 a_position;
-        attribute float a_alpha;
-        varying float v_alpha;
-        uniform vec2 u_resolution;
-        void main() {
-            vec2 clipSpace = ((a_position / u_resolution) * 2.0) - 1.0;
-            gl_Position = vec4(clipSpace * vec2(1, -1), 0.0, 1.0);
-            v_alpha = a_alpha;
-            gl_PointSize = 4.0;
-        }
-    </script>
-    
-    <script id="pendulum-preview-fragment-shader" type="x-shader/x-fragment">
-        precision mediump float;
-        varying float v_alpha;
-        uniform vec4 u_color;
-        void main() {
-            gl_FragColor = vec4(u_color.rgb, u_color.a * v_alpha);
-        }
-    </script>
 
-    <!-- GPU Double Pendulum Simulation Shaders -->
-    <script id="simulation-vertex-shader" type="x-shader/x-vertex">
-        attribute vec2 a_position;
-        void main() {
-            gl_Position = vec4(a_position, 0.0, 1.0);
-        }
-    </script>
-    
-    <script id="simulation-fragment-shader" type="x-shader/x-fragment">
-        precision highp float;
-        
-        // Input state as uniforms (simpler than texture sampling for small state)
-        uniform float u_theta1_p1;
-        uniform float u_theta2_p1;
-        uniform float u_omega1_p1;
-        uniform float u_omega2_p1;
-        uniform float u_theta1_p2;
-        uniform float u_theta2_p2;
-        uniform float u_omega1_p2;
-        uniform float u_omega2_p2;
-        
-        uniform float u_l1;
-        uniform float u_l2;
-        uniform float u_m1;
-        uniform float u_m2;
-        uniform float u_g;
-        uniform float u_dt;
-        uniform int u_integrator; // 0=RK4, 1=Verlet
-        uniform int u_pendulumIndex; // 0 or 1 - which pendulum to output
-        
-        struct State {
-            float theta1;
-            float theta2;
-            float omega1;
-            float omega2;
-        };
-        
-        void computeAccelerations(State s, out float alpha1, out float alpha2) {
-            float M = u_m1 + u_m2;
-            float delta = s.theta1 - s.theta2;
-            float sinDelta = sin(delta);
-            float cosDelta = cos(delta);
-            
-            float alpha_denom = u_m1 + u_m2 * sinDelta * sinDelta;
-            
-            float num1 = -u_m2 * u_l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
-                       - u_m2 * u_l2 * s.omega2 * s.omega2 * sinDelta
-                       - M * u_g * sin(s.theta1)
-                       + u_m2 * u_g * sin(s.theta2) * cosDelta;
-            
-            float num2 = M * u_l1 * s.omega1 * s.omega1 * sinDelta
-                       + u_m2 * u_l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
-                       + M * u_g * sin(s.theta1) * cosDelta
-                       - M * u_g * sin(s.theta2);
-            
-            alpha1 = num1 / (u_l1 * alpha_denom);
-            alpha2 = num2 / (u_l2 * alpha_denom);
-        }
-        
-        State stepRK4(State s) {
-            float dt = u_dt;
-            
-            // k1
-            float a1_k1, a2_k1;
-            computeAccelerations(s, a1_k1, a2_k1);
-            
-            // k2
-            State s2;
-            s2.theta1 = s.theta1 + 0.5 * dt * s.omega1;
-            s2.theta2 = s.theta2 + 0.5 * dt * s.omega2;
-            s2.omega1 = s.omega1 + 0.5 * dt * a1_k1;
-            s2.omega2 = s.omega2 + 0.5 * dt * a2_k1;
-            float a1_k2, a2_k2;
-            computeAccelerations(s2, a1_k2, a2_k2);
-            
-            // k3
-            State s3;
-            s3.theta1 = s.theta1 + 0.5 * dt * s2.omega1;
-            s3.theta2 = s.theta2 + 0.5 * dt * s2.omega2;
-            s3.omega1 = s.omega1 + 0.5 * dt * a1_k2;
-            s3.omega2 = s.omega2 + 0.5 * dt * a2_k2;
-            float a1_k3, a2_k3;
-            computeAccelerations(s3, a1_k3, a2_k3);
-            
-            // k4
-            State s4;
-            s4.theta1 = s.theta1 + dt * s3.omega1;
-            s4.theta2 = s.theta2 + dt * s3.omega2;
-            s4.omega1 = s.omega1 + dt * a1_k3;
-            s4.omega2 = s.omega2 + dt * a2_k3;
-            float a1_k4, a2_k4;
-            computeAccelerations(s4, a1_k4, a2_k4);
-            
-            // Combine
-            State next;
-            next.theta1 = s.theta1 + dt * (s.omega1 + 2.0 * s2.omega1 + 2.0 * s3.omega1 + s4.omega1) / 6.0;
-            next.theta2 = s.theta2 + dt * (s.omega2 + 2.0 * s2.omega2 + 2.0 * s3.omega2 + s4.omega2) / 6.0;
-            next.omega1 = s.omega1 + dt * (a1_k1 + 2.0 * a1_k2 + 2.0 * a1_k3 + a1_k4) / 6.0;
-            next.omega2 = s.omega2 + dt * (a2_k1 + 2.0 * a2_k2 + 2.0 * a2_k3 + a2_k4) / 6.0;
-            
-            return next;
-        }
-        
-        // Velocity Verlet - symplectic integrator
-        State stepVerlet(State s) {
-            float halfDt = 0.5 * u_dt;
-            
-            // Current accelerations
-            float alpha1, alpha2;
-            computeAccelerations(s, alpha1, alpha2);
-            
-            // Half-step velocity
-            float omega1_half = s.omega1 + halfDt * alpha1;
-            float omega2_half = s.omega2 + halfDt * alpha2;
-            
-            // Full position update
-            State next;
-            next.theta1 = s.theta1 + u_dt * omega1_half;
-            next.theta2 = s.theta2 + u_dt * omega2_half;
-            next.omega1 = omega1_half;
-            next.omega2 = omega2_half;
-            
-            // New accelerations
-            computeAccelerations(next, alpha1, alpha2);
-            
-            // Final half-step velocity
-            next.omega1 += halfDt * alpha1;
-            next.omega2 += halfDt * alpha2;
-            
-            return next;
-        }
-        
-        void main() {
-            State s;
-            
-            // Read input state based on which pendulum we're simulating
-            if (u_pendulumIndex == 0) {
-                s.theta1 = u_theta1_p1;
-                s.theta2 = u_theta2_p1;
-                s.omega1 = u_omega1_p1;
-                s.omega2 = u_omega2_p1;
-            } else {
-                s.theta1 = u_theta1_p2;
-                s.theta2 = u_theta2_p2;
-                s.omega1 = u_omega1_p2;
-                s.omega2 = u_omega2_p2;
-            }
-            
-            // Step physics
-            State next;
-            if (u_integrator == 1) {
-                next = stepVerlet(s);
-            } else {
-                next = stepRK4(s);
-            }
-            
-            // Output state packed as RGBA
-            gl_FragColor = vec4(next.theta1, next.theta2, next.omega1, next.omega2);
-        }
-    </script>
-    
 
 
     <script id="chaos-fragment-shader" type="x-shader/x-fragment">
@@ -1225,7 +1066,7 @@
         uniform bool u_deltaMode; // When true, add output to basis state instead of replacing
         
         const float PI = 3.14159265359;
-        const int MAX_ITERATIONS = 10000;
+        const int MAX_ITERATIONS = 100000;  // Upper bound - actual limit controlled by u_maxIter uniform
         
         struct State {
             float theta1;
@@ -1623,7 +1464,7 @@
     <!-- Split JavaScript modules -->
     <script src="js/constants.js"></script>
     <script src="js/transform.js"></script>
-    <script src="js/pendulum-sim-gpu.js"></script>
+    <script src="js/pendulum-sim-cpu.js"></script>
     <script src="js/chaos-renderer.js"></script>
     <script src="js/chaos-renderer-ui.js"></script>
     <script src="js/chaos-renderer-stack.js"></script>

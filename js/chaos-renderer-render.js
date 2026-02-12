@@ -196,26 +196,18 @@ ChaosMapRenderer.prototype.drawCircleInGL = function(gl, program, positionBuffer
 
 // Clean up all pinned simulations when leaving page
 ChaosMapRenderer.prototype.cleanup = function() {
-    // Clean up hover simulation
-    if (this.hoverAnimationId) {
-        cancelAnimationFrame(this.hoverAnimationId);
-        this.hoverAnimationId = null;
-    }
-    if (this.hoverGPUSim) {
-        this.hoverGPUSim.destroy();
-        this.hoverGPUSim = null;
-    }
+    // Stop hover simulation
+    this.stopHoverSimulation();
     
     // Clean up all pinned simulations
     this.pinnedSimulations.forEach(sim => {
         if (sim.animationId) {
             cancelAnimationFrame(sim.animationId);
         }
-        if (sim.gpuSim) {
-            sim.gpuSim.destroy();
+        if (sim.cpuSim) {
+            sim.cpuSim.destroy();
         }
     });
-    this.pinnedGPUSims.clear();
     this.pinnedSimulations = [];
 };
 

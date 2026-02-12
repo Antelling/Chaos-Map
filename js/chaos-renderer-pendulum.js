@@ -1,86 +1,62 @@
 // Double Pendulum Chaos Map - Pendulum Simulation Methods (Part 5)
-// These methods extend ChaosMapRenderer
+// Uses CPU-based simulation with 2D Canvas rendering
+// Always uses Velocity Verlet symplectic integrator for accuracy
 
-// Update the hover preview pane (top one) with current hover state
+// Hover debounce timer - shared across all preview updates
+ChaosMapRenderer.prototype.hoverDebounceTimer = null;
+ChaosMapRenderer.prototype.hoverDebouncedPosition = null;
+ChaosMapRenderer.prototype.hoverCPUSim = null;
+
+// Update the hover preview pane with current hover state
 ChaosMapRenderer.prototype.updateHoverPreview = function(nx, ny) {
-    // Compute the state at this position
-    // Flip Y to match shader coordinate system (shader uses flipped Y for noise sampling)
-    const state = this.stack.computeState(nx, 1 - ny);
+    // Store the position for debounced processing
+    this.hoverDebouncedPosition = { nx, ny };
     
-    // Update hover preview state
-    this.hoverPreviewState = { ...state };
-    this.hoverPerturbedState = this.computePerturbedState(state);
+    // Clear existing timer
+    if (this.hoverDebounceTimer) {
+        clearTimeout(this.hoverDebounceTimer);
+    }
     
-    // Update the title
+    // Update the title immediately
     const title = document.getElementById('hoverPaneTitle');
     if (title) {
         title.textContent = `Preview (${nx.toFixed(2)}, ${ny.toFixed(2)})`;
     }
     
-    // Only reinitialize simulation if state has actually changed significantly
-    // This prevents constant reset during mouse hover
-    if (!this.hoverGPUSim || this.hasStateChangedSignificantly(state, this.lastHoverSimState)) {
-        this.initHoverGPUSim(state);
-        this.lastHoverSimState = { ...state };
-    }
+    // Compute state and perturbed state ONCE for consistency
+    // Pass normalized coordinates for deterministic perturbation (matches GPU)
+    const state = this.stack.computeState(nx, 1 - ny);
+    const perturbedState = this.computePerturbedState(state, nx, 1 - ny);
+    
+    // Show static preview immediately
+    this.renderStaticHoverPreview(state, perturbedState);
+    
+    // Debounce: wait 500ms before starting animation
+    this.hoverDebounceTimer = setTimeout(() => {
+        if (this.hoverDebouncedPosition && 
+            this.hoverDebouncedPosition.nx === nx && 
+            this.hoverDebouncedPosition.ny === ny) {
+            // Mouse has stopped for 500ms, start animation
+            this.initHoverCPUSim(state, perturbedState);
+        }
+    }, 500);
 };
 
-// Check if state has changed enough to warrant simulation reinitialization
-ChaosMapRenderer.prototype.hasStateChangedSignificantly = function(newState, oldState) {
-    if (!oldState) return true;
+// Render a static preview (one frame, no animation)
+ChaosMapRenderer.prototype.renderStaticHoverPreview = function(state, perturbedState) {
+    // If already animating, don't override
+    if (this.hoverAnimationId) return;
     
-    // Use a smaller threshold for more responsive hover updates
-    // Angle threshold: ~0.006 degrees (very sensitive)
-    // Length/mass threshold: 0.1% change
-    const angleThreshold = 0.0001;
-    const paramThreshold = 0.001;
-    
-    return (
-        Math.abs(newState.theta1 - oldState.theta1) > angleThreshold ||
-        Math.abs(newState.theta2 - oldState.theta2) > angleThreshold ||
-        Math.abs(newState.omega1 - oldState.omega1) > angleThreshold ||
-        Math.abs(newState.omega2 - oldState.omega2) > angleThreshold ||
-        Math.abs(newState.l1 - oldState.l1) > paramThreshold ||
-        Math.abs(newState.l2 - oldState.l2) > paramThreshold ||
-        Math.abs(newState.m1 - oldState.m1) > paramThreshold ||
-        Math.abs(newState.m2 - oldState.m2) > paramThreshold
-    );
-};
-
-// Initialize GPU simulation for hover preview
-ChaosMapRenderer.prototype.initHoverGPUSim = function(state) {
     try {
-        // Clean up existing simulation
-        if (this.hoverGPUSim) {
-            this.hoverGPUSim.destroy();
-            this.hoverGPUSim = null;
-        }
-        
-        // Cancel any existing animation frame
-        if (this.hoverAnimationId) {
-            cancelAnimationFrame(this.hoverAnimationId);
-            this.hoverAnimationId = null;
-        }
-        
-        // Create perturbed state
-        const perturbedState = this.computePerturbedState(state);
-        
-        // Debug: verify states are different
-        console.log('Creating sim:', {
-            s1: {t1: state.theta1.toFixed(6), t2: state.theta2.toFixed(6)},
-            s2: {t1: perturbedState.theta1.toFixed(6), t2: perturbedState.theta2.toFixed(6)},
-            diff: (perturbedState.theta1 - state.theta1).toExponential(2)
-        });
-        
-        // Use GPUPendulumSimulation (CPU physics + WebGL rendering)
-        this.hoverGPUSim = new GPUPendulumSimulation(this.pendulumPreviewCanvas, {
+        // Create a temporary simulation just for one frame
+        const tempSim = new CPUPendulumSimulation(this.pendulumPreviewCanvas, {
             g: this.baseParams.g,
             dt: this.baseParams.dt,
             l1: state.l1,
             l2: state.l2,
             m1: state.m1,
             m2: state.m2,
-            integrator: this.baseParams.integrator,
+
             threshold: this.baseParams.threshold,
             initialState1: {
                 theta1: state.theta1,
@@ -96,39 +72,97 @@ ChaosMapRenderer.prototype.initHoverGPUSim = function(state) {
             }
         });
         
-        // Start animation loop
-        this.animateHoverGPUSim();
+        // Render one frame
+        tempSim.render();
     } catch (e) {
-        console.error('Failed to initialize simulation:', e);
+        console.error('Failed to render static preview:', e);
+    }
+};
+
+// Initialize CPU simulation for hover preview
+ChaosMapRenderer.prototype.initHoverCPUSim = function(state, perturbedState) {
+    try {
+        // Clean up existing simulation
+        if (this.hoverCPUSim) {
+            this.hoverCPUSim.destroy();
+            this.hoverCPUSim = null;
+        }
+        
+        // Cancel any existing animation frame
+        if (this.hoverAnimationId) {
+            cancelAnimationFrame(this.hoverAnimationId);
+            this.hoverAnimationId = null;
+        }
+        
+        // Get energy canvases and clear them
+        const energyCanvas = document.getElementById('energyCanvas');
+        const energyTimeCanvas = document.getElementById('energyTimeCanvas');
+        if (energyCanvas) {
+            const ctx = energyCanvas.getContext('2d');
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, energyCanvas.width, energyCanvas.height);
+        }
+        if (energyTimeCanvas) {
+            const ctx = energyTimeCanvas.getContext('2d');
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, energyTimeCanvas.width, energyTimeCanvas.height);
+        }
+        
+        // Create CPU-based simulation (using pre-computed states)
+        this.hoverCPUSim = new CPUPendulumSimulation(this.pendulumPreviewCanvas, {
+            g: this.baseParams.g,
+            dt: this.baseParams.dt,
+            l1: state.l1,
+            l2: state.l2,
+            m1: state.m1,
+            m2: state.m2,
+            energyCanvas: energyCanvas,
+            energyTimeCanvas: energyTimeCanvas,
+            threshold: this.baseParams.threshold,
+            initialState1: {
+                theta1: state.theta1,
+                theta2: state.theta2,
+                omega1: state.omega1,
+                omega2: state.omega2
+            },
+            initialState2: {
+                theta1: perturbedState.theta1,
+                theta2: perturbedState.theta2,
+                omega1: perturbedState.omega1,
+                omega2: perturbedState.omega2
+            }
+        });
+        
+        // Initial render before starting animation
+        this.hoverCPUSim.render();
+        
+        // Start animation loop
+        this.animateHoverCPUSim();
+    } catch (e) {
+        console.error('Failed to initialize hover simulation:', e);
     }
 };
 
 // Animation loop for hover simulation
-ChaosMapRenderer.prototype.animateHoverGPUSim = function() {
-    if (!this.hoverGPUSim) {
-        this.hoverAnimationId = null;
-        return;
-    }
-    
-    // Check if WebGL context is valid
-    if (this.hoverGPUSim.gl.isContextLost()) {
+ChaosMapRenderer.prototype.animateHoverCPUSim = function() {
+    if (!this.hoverCPUSim) {
         this.hoverAnimationId = null;
         return;
     }
     
     // Step and render
     try {
-        this.hoverGPUSim.step(this.pendulumSimSpeed);
-        this.hoverGPUSim.render();
+        this.hoverCPUSim.step(this.pendulumSimSpeed);
+        this.hoverCPUSim.render();
     } catch (e) {
         console.error('Error in hover simulation:', e);
-        this.hoverGPUSim = null;
+        this.hoverCPUSim = null;
         this.hoverAnimationId = null;
         return;
     }
     
     // Continue animation
-    this.hoverAnimationId = requestAnimationFrame(() => this.animateHoverGPUSim());
+    this.hoverAnimationId = requestAnimationFrame(() => this.animateHoverCPUSim());
 };
 
 // Toggle pin mode - when active, clicking on map creates a pinned simulation
@@ -196,12 +230,10 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
         ny,
         state: { ...state },
         perturbedState: { ...perturbedState },
-        trail: [],
-        divergenceTime: null,
         animationId: null,
         canvas: null,
         element: null,
-        gpuSim: null
+        cpuSim: null
     };
     
     // Create DOM element for this simulation
@@ -213,19 +245,19 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
         container.appendChild(sim.element);
     }
     
-    // Get canvas and create GPU simulation
+    // Get canvas and create CPU simulation
     sim.canvas = sim.element.querySelector('canvas');
     
     try {
-        // Create simulation (CPU physics + WebGL rendering)
-        sim.gpuSim = new GPUPendulumSimulation(sim.canvas, {
+        // Create CPU-based simulation
+        sim.cpuSim = new CPUPendulumSimulation(sim.canvas, {
             g: this.baseParams.g,
             dt: this.baseParams.dt,
             l1: state.l1,
             l2: state.l2,
             m1: state.m1,
             m2: state.m2,
-            integrator: this.baseParams.integrator,
+
             threshold: this.baseParams.threshold,
             initialState1: {
                 theta1: state.theta1,
@@ -241,10 +273,10 @@ ChaosMapRenderer.prototype.createPinnedSimulation = function(nx, ny) {
             }
         });
         
-        // Store in map
-        this.pinnedGPUSims.set(sim.id, sim.gpuSim);
+        // Initial render
+        sim.cpuSim.render();
     } catch (e) {
-        console.error('Failed to create simulation:', e);
+        console.error('Failed to create CPU simulation:', e);
     }
     
     // Add to array
@@ -295,10 +327,9 @@ ChaosMapRenderer.prototype.removePinnedSimulation = function(id) {
         cancelAnimationFrame(sim.animationId);
     }
     
-    // Clean up GPU simulation
-    if (sim.gpuSim) {
-        sim.gpuSim.destroy();
-        this.pinnedGPUSims.delete(id);
+    // Clean up CPU simulation
+    if (sim.cpuSim) {
+        sim.cpuSim.destroy();
     }
     
     // Remove DOM element
@@ -340,22 +371,22 @@ ChaosMapRenderer.prototype.animatePinnedSimulation = function(sim) {
     const steps = this.pendulumSimSpeed;
     
     // Use CPU-based simulation
-    if (sim.gpuSim) {
+    if (sim.cpuSim) {
         try {
             // Step simulation
-            sim.gpuSim.step(steps);
+            sim.cpuSim.step(steps);
             
             // Render
-            sim.gpuSim.render();
+            sim.cpuSim.render();
             
             // Update status
             const statusEl = document.getElementById(`status-${sim.id}`);
             if (statusEl) {
-                if (sim.gpuSim.diverged) {
-                    statusEl.textContent = `Diverged at t=${sim.gpuSim.divergenceTime}`;
+                if (sim.cpuSim.diverged) {
+                    statusEl.textContent = `Diverged at t=${sim.cpuSim.divergenceTime}`;
                     statusEl.style.color = '#f88';
                 } else {
-                    statusEl.textContent = `t=${sim.gpuSim.frameCount}`;
+                    statusEl.textContent = `t=${sim.cpuSim.frameCount}`;
                     statusEl.style.color = '#8f8';
                 }
             }
@@ -370,4 +401,24 @@ ChaosMapRenderer.prototype.animatePinnedSimulation = function(sim) {
     sim.animationId = requestAnimationFrame(() => this.animatePinnedSimulation(sim));
 };
 
-
+// Stop hover simulation when mouse leaves
+ChaosMapRenderer.prototype.stopHoverSimulation = function() {
+    // Clear debounce timer
+    if (this.hoverDebounceTimer) {
+        clearTimeout(this.hoverDebounceTimer);
+        this.hoverDebounceTimer = null;
+    }
+    this.hoverDebouncedPosition = null;
+    
+    // Stop animation
+    if (this.hoverAnimationId) {
+        cancelAnimationFrame(this.hoverAnimationId);
+        this.hoverAnimationId = null;
+    }
+    
+    // Clean up simulation
+    if (this.hoverCPUSim) {
+        this.hoverCPUSim.destroy();
+        this.hoverCPUSim = null;
+    }
+};

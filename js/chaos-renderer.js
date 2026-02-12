@@ -17,15 +17,9 @@ class ChaosMapRenderer {
         
         // Pendulum simulation panel
         this.pendulumPreviewCanvas = document.getElementById('pendulumPreviewCanvas');
-        this.pendulumPreviewGl = null;
-        this.pendulumPreviewProgram = null;
-        this.pendulumPreviewState = null;
-        this.pendulumPreviewTrail = [];
-        this.pendulumPreviewTrailBuffer = null;
         
-        // GPU-based pendulum simulation
-        this.hoverGPUSim = null;
-        this.pinnedGPUSims = new Map(); // Map simId -> GPUPendulumSimulation
+        // CPU-based pendulum simulation
+        this.hoverCPUSim = null;
         
         // Transformation stack
         this.stack = new TransformationStack();
@@ -81,7 +75,7 @@ class ChaosMapRenderer {
         this.cyclePeriod = 500;
         
         // Pendulum simulation
-        this.pendulumSimSpeed = 1;
+        this.pendulumSimSpeed = 5;
         
         // Multiple permanent simulations (max 3)
         this.pinnedSimulations = []; // Array of {id, nx, ny, state, perturbedState, trail, divergenceTime, animationId, element}
@@ -113,7 +107,7 @@ class ChaosMapRenderer {
         this.setupWebGL();
         this.setupTileWebGL();
         this.setupPreviewWebGL();
-        this.setupPendulumPreviewWebGL();
+
         this.setupEventListeners();
         this.resizeCanvas();
         this.updateLegend();
@@ -319,43 +313,7 @@ class ChaosMapRenderer {
         gl.enableVertexAttribArray(positionLocation);
         gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
     }
-    
-    setupPendulumPreviewWebGL() {
-        if (!this.pendulumPreviewCanvas) return;
-        
-        this.pendulumPreviewGl = this.pendulumPreviewCanvas.getContext('webgl', {
-            antialias: true,
-            preserveDrawingBuffer: true
-        });
-        
-        if (!this.pendulumPreviewGl) {
-            console.error('WebGL not supported for pendulum preview');
-            return;
-        }
-        
-        const gl = this.pendulumPreviewGl;
-        
-        // Use the shader scripts from HTML
-        const vsEl = document.getElementById('pendulum-preview-vertex-shader');
-        const fsEl = document.getElementById('pendulum-preview-fragment-shader');
-        const vsSource = vsEl ? vsEl.textContent : null;
-        const fsSource = fsEl ? fsEl.textContent : null;
-        
-        if (!vsSource || !fsSource) {
-            console.error('Pendulum preview shader sources not found');
-            return;
-        }
-        
-        const vs = this.createShader(gl, gl.VERTEX_SHADER, vsSource);
-        const fs = this.createShader(gl, gl.FRAGMENT_SHADER, fsSource);
-        
-        if (!vs || !fs) return;
-        
-        this.pendulumPreviewProgram = this.createProgram(gl, vs, fs);
-        this.pendulumPreviewTrailBuffer = gl.createBuffer();
-        this.pendulumPositionBuffer = gl.createBuffer();
-    }
-    
+
     createShader(gl, type, source) {
         if (!gl || gl.isContextLost()) return null;
         const shader = gl.createShader(type);

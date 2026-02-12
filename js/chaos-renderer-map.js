@@ -327,6 +327,9 @@ ChaosMapRenderer.prototype.handleMapMouseLeave = function() {
     
     const info = document.getElementById('hoverInfo');
     if (info) info.innerHTML = 'Hover over map to see pendulum state';
+    
+    // Stop hover simulation when mouse leaves
+    this.stopHoverSimulation();
 };
 
 ChaosMapRenderer.prototype.createZoomOverlay = function() {
