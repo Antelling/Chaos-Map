@@ -1,6 +1,6 @@
 // CPU-Based Double Pendulum Simulation (OPTIMIZED)
 // Uses standard 2D Canvas for rendering and CPU-based numerical integration
-// Velocity Verlet symplectic integrator for maximum accuracy
+// Uses shared cpu-physics.js engine for physics calculations
 
 class CPUPendulumSimulation {
     constructor(canvas, options = {}) {
@@ -96,41 +96,48 @@ class CPUPendulumSimulation {
         this.scale = (minDimension * 0.4) / maxReach;
     }
     
-    // Compute accelerations given current state
-    computeAccelerations(s, l1, l2, m1, m2) {
-        const M = this.M;
+    // Use shared physics engine for stepping
+    stepState(s) {
+        if (window.CPUPhysics) {
+            // Use shared physics engine
+            if (this.integrator === 'rk4') {
+                window.CPUPhysics.stepRK4(s, this.l1, this.l2, this.m1, this.m2, this.dt, this.g);
+            } else {
+                window.CPUPhysics.stepVerlet(s, this.l1, this.l2, this.m1, this.m2, this.dt, this.g);
+            }
+        } else {
+            // Fallback to inline implementation if CPUPhysics not loaded
+            this.stepInline(s);
+        }
+    }
+    
+    // Inline step implementation (fallback)
+    stepInline(s) {
+        const dt = this.dt;
+        const halfDt = 0.5 * dt;
+        const g = this.g;
+        const l1 = this.l1, l2 = this.l2, m1 = this.m1, m2 = this.m2;
+        
+        // Compute accelerations
+        const M = m1 + m2;
         const delta = s.theta1 - s.theta2;
         const sinDelta = Math.sin(delta);
         const cosDelta = Math.cos(delta);
         
         const alphaDenom = m1 + m2 * sinDelta * sinDelta;
         
-        const sinTheta1 = Math.sin(s.theta1);
-        const sinTheta2 = Math.sin(s.theta2);
-        
         const num1 = -m2 * l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
                    - m2 * l2 * s.omega2 * s.omega2 * sinDelta
-                   - M * this.g * sinTheta1
-                   + m2 * this.g * sinTheta2 * cosDelta;
+                   - M * g * Math.sin(s.theta1)
+                   + m2 * g * Math.sin(s.theta2) * cosDelta;
         
         const num2 = M * l1 * s.omega1 * s.omega1 * sinDelta
                    + m2 * l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
-                   + M * this.g * sinTheta1 * cosDelta
-                   - M * this.g * sinTheta2;
+                   + M * g * Math.sin(s.theta1) * cosDelta
+                   - M * g * Math.sin(s.theta2);
         
         const alpha1 = num1 / (l1 * alphaDenom);
         const alpha2 = num2 / (l2 * alphaDenom);
-        
-        return { alpha1, alpha2 };
-    }
-    
-    // Velocity Verlet integrator - symplectic, matches stepPhysicsVerlet from shader
-    stepVerlet(s, l1, l2, m1, m2) {
-        const dt = this.dt;
-        const halfDt = 0.5 * dt;
-        
-        // Current accelerations
-        const { alpha1, alpha2 } = this.computeAccelerations(s, l1, l2, m1, m2);
         
         // Half-step velocity
         const omega1Half = s.omega1 + halfDt * alpha1;
@@ -143,70 +150,39 @@ class CPUPendulumSimulation {
         s.omega2 = omega2Half;
         
         // New accelerations
-        const { alpha1: newAlpha1, alpha2: newAlpha2 } = this.computeAccelerations(s, l1, l2, m1, m2);
+        const delta2 = s.theta1 - s.theta2;
+        const sinDelta2 = Math.sin(delta2);
+        const cosDelta2 = Math.cos(delta2);
+        const alphaDenom2 = m1 + m2 * sinDelta2 * sinDelta2;
+        
+        const num1_2 = -m2 * l1 * s.omega1 * s.omega1 * sinDelta2 * cosDelta2
+                     - m2 * l2 * s.omega2 * s.omega2 * sinDelta2
+                     - M * g * Math.sin(s.theta1)
+                     + m2 * g * Math.sin(s.theta2) * cosDelta2;
+        
+        const num2_2 = M * l1 * s.omega1 * s.omega1 * sinDelta2
+                     + m2 * l2 * s.omega2 * s.omega2 * sinDelta2 * cosDelta2
+                     + M * g * Math.sin(s.theta1) * cosDelta2
+                     - M * g * Math.sin(s.theta2);
+        
+        const newAlpha1 = num1_2 / (l1 * alphaDenom2);
+        const newAlpha2 = num2_2 / (l2 * alphaDenom2);
         
         // Final half-step velocity
         s.omega1 += halfDt * newAlpha1;
         s.omega2 += halfDt * newAlpha2;
     }
     
-    // RK4 integrator - 4th order Runge-Kutta
-    stepRK4(s, l1, l2, m1, m2) {
-        const dt = this.dt;
-        
-        const k1 = this.computeDerivatives(s, l1, l2, m1, m2);
-        
-        const s2 = {
-            theta1: s.theta1 + 0.5 * dt * k1.dtheta1,
-            theta2: s.theta2 + 0.5 * dt * k1.dtheta2,
-            omega1: s.omega1 + 0.5 * dt * k1.domega1,
-            omega2: s.omega2 + 0.5 * dt * k1.domega2,
-            l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
-        };
-        const k2 = this.computeDerivatives(s2, l1, l2, m1, m2);
-        
-        const s3 = {
-            theta1: s.theta1 + 0.5 * dt * k2.dtheta1,
-            theta2: s.theta2 + 0.5 * dt * k2.dtheta2,
-            omega1: s.omega1 + 0.5 * dt * k2.domega1,
-            omega2: s.omega2 + 0.5 * dt * k2.domega2,
-            l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
-        };
-        const k3 = this.computeDerivatives(s3, l1, l2, m1, m2);
-        
-        const s4 = {
-            theta1: s.theta1 + dt * k3.dtheta1,
-            theta2: s.theta2 + dt * k3.dtheta2,
-            omega1: s.omega1 + dt * k3.domega1,
-            omega2: s.omega2 + dt * k3.domega2,
-            l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
-        };
-        const k4 = this.computeDerivatives(s4, l1, l2, m1, m2);
-        
-        s.theta1 += dt * (k1.dtheta1 + 2*k2.dtheta1 + 2*k3.dtheta1 + k4.dtheta1) / 6;
-        s.theta2 += dt * (k1.dtheta2 + 2*k2.dtheta2 + 2*k3.dtheta2 + k4.dtheta2) / 6;
-        s.omega1 += dt * (k1.domega1 + 2*k2.domega1 + 2*k3.domega1 + k4.domega1) / 6;
-        s.omega2 += dt * (k1.domega2 + 2*k2.domega2 + 2*k3.domega2 + k4.domega2) / 6;
-    }
-    
-    // Compute derivatives for RK4
-    computeDerivatives(s, l1, l2, m1, m2) {
-        const acc = this.computeAccelerations(s, l1, l2, m1, m2);
-        return {
-            dtheta1: s.omega1,
-            dtheta2: s.omega2,
-            domega1: acc.alpha1,
-            domega2: acc.alpha2
-        };
-    }
-    
-    // Measure divergence between two states
+    // Measure divergence between two states using shared physics
     measureDivergence(s1, s2) {
-        // Circular difference for angles
+        if (window.CPUPhysics) {
+            return window.CPUPhysics.measureDivergence(s1, s2);
+        }
+        
+        // Fallback inline
         let dTheta1 = s1.theta1 - s2.theta1;
         let dTheta2 = s1.theta2 - s2.theta2;
         
-        // Normalize angle differences
         if (dTheta1 > Math.PI) dTheta1 -= 2 * Math.PI;
         else if (dTheta1 < -Math.PI) dTheta1 += 2 * Math.PI;
         
@@ -240,12 +216,10 @@ class CPUPendulumSimulation {
     
     // Step both pendulums forward
     step(steps = 1) {
-        const stepFn = this.integrator === 'rk4' ? this.stepRK4.bind(this) : this.stepVerlet.bind(this);
-        
         for (let i = 0; i < steps; i++) {
             // Step BOTH pendulums FIRST (must be at same time point for comparison)
-            stepFn(this.state1, this.l1, this.l2, this.m1, this.m2);
-            stepFn(this.state2, this.l1, this.l2, this.m1, this.m2);
+            this.stepState(this.state1);
+            this.stepState(this.state2);
             
             this.frameCount++;
             
@@ -316,19 +290,11 @@ class CPUPendulumSimulation {
         this.trail1.push(this.pos1.x2, this.pos1.y2);
         this.trail2.push(this.pos2.x2, this.pos2.y2);
         
-        // Limit trail length (circular buffer would be better but this is simpler)
+        // Limit trail length
         if (this.trail1.length > this.maxTrailPoints * 2) {
             this.trail1 = this.trail1.slice(-this.maxTrailPoints * 2);
             this.trail2 = this.trail2.slice(-this.maxTrailPoints * 2);
         }
-    }
-    
-    // Transform physics coordinates to canvas coordinates (inline)
-    toCanvas(x, y) {
-        return {
-            x: this.centerX + x * this.scale,
-            y: this.centerY + y * this.scale
-        };
     }
     
     // Render the pendulum

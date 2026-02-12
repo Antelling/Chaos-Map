@@ -1,5 +1,8 @@
 // Chaos Map CPU Renderer WebWorker
 // Runs 64-bit double precision physics in a separate thread
+// Uses shared cpu-physics.js engine
+
+importScripts('cpu-physics.js');
 
 self.onmessage = function(e) {
     const { action, params } = e.data;
@@ -107,7 +110,11 @@ function renderTile(offsetX, offsetY, width, height, resolution, shaderParams, c
             state2.omega1 += pOmega1;
             state2.omega2 += pOmega2;
             
-            const result = simulateToDivergence(state1, state2, maxIter, threshold, dt, g, integrator);
+            // Use shared physics engine
+            const result = self.CPUPhysics.simulateToDivergence(
+                state1, state2, maxIter, threshold, dt, g, integrator
+            );
+            
             const [r, gVal, b] = getColor(result.iteration, result.diverged, result.divergenceTime, maxIter, colorMapping, cyclePeriod);
             
             const idx = (py * width + px) * 4;
@@ -132,140 +139,6 @@ function applyDimension(state, idx, value) {
         case 6: state.m1 = value; break;
         case 7: state.m2 = value; break;
     }
-}
-
-function simulateToDivergence(s1, s2, maxIter, threshold, dt, g, integrator) {
-    let state1 = { ...s1 };
-    let state2 = { ...s2 };
-    
-    let iter = 0;
-    let diverged = false;
-    let divergenceTime = 0;
-    
-    while (iter < maxIter && !diverged) {
-        if (integrator === 'verlet') {
-            stepVerlet(state1, dt, g);
-            stepVerlet(state2, dt, g);
-        } else {
-            stepRK4(state1, dt, g);
-            stepRK4(state2, dt, g);
-        }
-        
-        iter++;
-        
-        const dist = measureDivergence(state1, state2);
-        if (dist > threshold) {
-            diverged = true;
-            divergenceTime = iter;
-        }
-    }
-    
-    return { iteration: iter, diverged, divergenceTime };
-}
-
-function stepVerlet(s, dt, g) {
-    const halfDt = 0.5 * dt;
-    
-    const acc1 = computeAccelerations(s, g);
-    
-    const omega1Half = s.omega1 + halfDt * acc1.alpha1;
-    const omega2Half = s.omega2 + halfDt * acc1.alpha2;
-    
-    s.theta1 += dt * omega1Half;
-    s.theta2 += dt * omega2Half;
-    s.omega1 = omega1Half;
-    s.omega2 = omega2Half;
-    
-    const acc2 = computeAccelerations(s, g);
-    
-    s.omega1 += halfDt * acc2.alpha1;
-    s.omega2 += halfDt * acc2.alpha2;
-}
-
-function stepRK4(s, dt, g) {
-    const k1 = computeDerivatives(s, g);
-    
-    const s2 = {
-        theta1: s.theta1 + 0.5 * dt * k1.dtheta1,
-        theta2: s.theta2 + 0.5 * dt * k1.dtheta2,
-        omega1: s.omega1 + 0.5 * dt * k1.domega1,
-        omega2: s.omega2 + 0.5 * dt * k1.domega2,
-        l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
-    };
-    const k2 = computeDerivatives(s2, g);
-    
-    const s3 = {
-        theta1: s.theta1 + 0.5 * dt * k2.dtheta1,
-        theta2: s.theta2 + 0.5 * dt * k2.dtheta2,
-        omega1: s.omega1 + 0.5 * dt * k2.domega1,
-        omega2: s.omega2 + 0.5 * dt * k2.domega2,
-        l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
-    };
-    const k3 = computeDerivatives(s3, g);
-    
-    const s4 = {
-        theta1: s.theta1 + dt * k3.dtheta1,
-        theta2: s.theta2 + dt * k3.dtheta2,
-        omega1: s.omega1 + dt * k3.domega1,
-        omega2: s.omega2 + dt * k3.domega2,
-        l1: s.l1, l2: s.l2, m1: s.m1, m2: s.m2
-    };
-    const k4 = computeDerivatives(s4, g);
-    
-    s.theta1 += dt * (k1.dtheta1 + 2*k2.dtheta1 + 2*k3.dtheta1 + k4.dtheta1) / 6;
-    s.theta2 += dt * (k1.dtheta2 + 2*k2.dtheta2 + 2*k3.dtheta2 + k4.dtheta2) / 6;
-    s.omega1 += dt * (k1.domega1 + 2*k2.domega1 + 2*k3.domega1 + k4.domega1) / 6;
-    s.omega2 += dt * (k1.domega2 + 2*k2.domega2 + 2*k3.domega2 + k4.domega2) / 6;
-}
-
-function computeAccelerations(s, g) {
-    const M = s.m1 + s.m2;
-    const delta = s.theta1 - s.theta2;
-    const sinDelta = Math.sin(delta);
-    const cosDelta = Math.cos(delta);
-    
-    const alphaDenom = s.m1 + s.m2 * sinDelta * sinDelta;
-    
-    const num1 = -s.m2 * s.l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
-               - s.m2 * s.l2 * s.omega2 * s.omega2 * sinDelta
-               - M * g * Math.sin(s.theta1)
-               + s.m2 * g * Math.sin(s.theta2) * cosDelta;
-    
-    const num2 = M * s.l1 * s.omega1 * s.omega1 * sinDelta
-               + s.m2 * s.l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
-               + M * g * Math.sin(s.theta1) * cosDelta
-               - M * g * Math.sin(s.theta2);
-    
-    return {
-        alpha1: num1 / (s.l1 * alphaDenom),
-        alpha2: num2 / (s.l2 * alphaDenom)
-    };
-}
-
-function computeDerivatives(s, g) {
-    const acc = computeAccelerations(s, g);
-    return {
-        dtheta1: s.omega1,
-        dtheta2: s.omega2,
-        domega1: acc.alpha1,
-        domega2: acc.alpha2
-    };
-}
-
-function measureDivergence(s1, s2) {
-    let dTheta1 = s1.theta1 - s2.theta1;
-    let dTheta2 = s1.theta2 - s2.theta2;
-    
-    if (dTheta1 > Math.PI) dTheta1 -= 2 * Math.PI;
-    else if (dTheta1 < -Math.PI) dTheta1 += 2 * Math.PI;
-    
-    if (dTheta2 > Math.PI) dTheta2 -= 2 * Math.PI;
-    else if (dTheta2 < -Math.PI) dTheta2 += 2 * Math.PI;
-    
-    const dOmega1 = s1.omega1 - s2.omega1;
-    const dOmega2 = s1.omega2 - s2.omega2;
-    
-    return Math.sqrt(dTheta1 * dTheta1 + dTheta2 * dTheta2 + dOmega1 * dOmega1 + dOmega2 * dOmega2);
 }
 
 function getColor(iteration, diverged, divergenceTime, maxIter, colorMapping, cyclePeriod) {
