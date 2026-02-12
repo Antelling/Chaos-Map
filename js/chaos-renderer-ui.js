@@ -381,6 +381,7 @@ ChaosMapRenderer.prototype.updatePerturbConfigUI = function() {
     if (!panel) return;
     
     const mode = this.baseParams.perturbMode;
+    const scale = this.baseParams.perturbScale;
     const dims = [
         { key: 'theta1', label: 'θ₁', unit: 'rad' },
         { key: 'theta2', label: 'θ₂', unit: 'rad' },
@@ -393,6 +394,14 @@ ChaosMapRenderer.prototype.updatePerturbConfigUI = function() {
     ];
     
     let html = '';
+    
+    // Master scalar control
+    html += '<div style="margin-bottom: 0.8rem; padding-bottom: 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.1);">';
+    html += '<div style="font-size: 0.75rem; color: #aaa; margin-bottom: 0.3rem;">Scale All</div>';
+    html += '<div style="display: flex; align-items: center; gap: 0.5rem;">';
+    html += '<input type="range" id="perturbScaleSlider" min="0" max="10" step="0.1" value="' + scale + '" style="flex: 1;">';
+    html += '<input type="number" id="perturbScaleInput" value="' + scale + '" step="0.1" style="width: 60px; padding: 0.2rem; font-size: 0.75rem; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.2); border-radius: 3px; color: #fff;">';
+    html += '</div></div>';
     
     if (mode === 'random') {
         // Random mode: center + std dev for each dimension
@@ -445,6 +454,22 @@ ChaosMapRenderer.prototype.updatePerturbConfigUI = function() {
             if (fixedInput) fixedInput.addEventListener('change', () => this.updatePerturbConfigFromUI());
         }
     });
+    
+    // Master scalar listeners
+    const scaleSlider = document.getElementById('perturbScaleSlider');
+    const scaleInput = document.getElementById('perturbScaleInput');
+    if (scaleSlider) {
+        scaleSlider.addEventListener('input', () => {
+            this.baseParams.perturbScale = parseFloat(scaleSlider.value) || 1.0;
+            if (scaleInput) scaleInput.value = this.baseParams.perturbScale;
+        });
+    }
+    if (scaleInput) {
+        scaleInput.addEventListener('change', () => {
+            this.baseParams.perturbScale = parseFloat(scaleInput.value) || 1.0;
+            if (scaleSlider) scaleSlider.value = this.baseParams.perturbScale;
+        });
+    }
 };
 
 ChaosMapRenderer.prototype.updatePerturbConfigFromUI = function() {
@@ -521,27 +546,34 @@ ChaosMapRenderer.prototype.computePerturbedState = function(baseState, normX, no
     
     if (mode === 'random') {
         // Random mode: sample from Gaussian around baseState + center offset
-        // This matches the chaos map shader: s2 = s1 + center + random * std
+        // This matches the chaos map shader: s2 = s1 + (center + random * std) * scale
         const pr = this.baseParams.perturbRandom;
+        const s = this.baseParams.perturbScale;
         return {
-            theta1: baseState.theta1 + pr.theta1.center + randn() * pr.theta1.std,
-            theta2: baseState.theta2 + pr.theta2.center + randn() * pr.theta2.std,
-            omega1: baseState.omega1 + pr.omega1.center + randn() * pr.omega1.std,
-            omega2: baseState.omega2 + pr.omega2.center + randn() * pr.omega2.std,
-            l1: Math.max(0.1, baseState.l1 + pr.l1.center + randn() * pr.l1.std),
-            l2: Math.max(0.1, baseState.l2 + pr.l2.center + randn() * pr.l2.std),
-            m1: Math.max(0.1, baseState.m1 + pr.m1.center + randn() * pr.m1.std),
-            m2: Math.max(0.1, baseState.m2 + pr.m2.center + randn() * pr.m2.std)
+            theta1: baseState.theta1 + (pr.theta1.center + randn() * pr.theta1.std) * s,
+            theta2: baseState.theta2 + (pr.theta2.center + randn() * pr.theta2.std) * s,
+            omega1: baseState.omega1 + (pr.omega1.center + randn() * pr.omega1.std) * s,
+            omega2: baseState.omega2 + (pr.omega2.center + randn() * pr.omega2.std) * s,
+            l1: Math.max(0.1, baseState.l1 + (pr.l1.center + randn() * pr.l1.std) * s),
+            l2: Math.max(0.1, baseState.l2 + (pr.l2.center + randn() * pr.l2.std) * s),
+            m1: Math.max(0.1, baseState.m1 + (pr.m1.center + randn() * pr.m1.std) * s),
+            m2: Math.max(0.1, baseState.m2 + (pr.m2.center + randn() * pr.m2.std) * s)
         };
     } else {
-        // Fixed mode: add fixed offsets
+        // Fixed mode: add fixed offsets scaled by master scalar
         const pf = this.baseParams.perturbFixed;
+        const s = this.baseParams.perturbScale;
         return {
-            theta1: baseState.theta1 + pf.theta1,
-            theta2: baseState.theta2 + pf.theta2,
-            omega1: baseState.omega1 + pf.omega1,
-            omega2: baseState.omega2 + pf.omega2,
-            l1: Math.max(0.1, baseState.l1 + pf.l1),
+            theta1: baseState.theta1 + pf.theta1 * s,
+            theta2: baseState.theta2 + pf.theta2 * s,
+            omega1: baseState.omega1 + pf.omega1 * s,
+            omega2: baseState.omega2 + pf.omega2 * s,
+            l1: Math.max(0.1, baseState.l1 + pf.l1 * s),
+            l2: Math.max(0.1, baseState.l2 + pf.l2 * s),
+            m1: Math.max(0.1, baseState.m1 + pf.m1 * s),
+            m2: Math.max(0.1, baseState.m2 + pf.m2 * s)
+        };
+    }
             l2: Math.max(0.1, baseState.l2 + pf.l2),
             m1: Math.max(0.1, baseState.m1 + pf.m1),
             m2: Math.max(0.1, baseState.m2 + pf.m2)

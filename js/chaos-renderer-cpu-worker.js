@@ -55,10 +55,11 @@ function renderTile(offsetX, offsetY, width, height, resolution, shaderParams, c
     const m1 = shaderParams.m1 ?? 1.0;
     const m2 = shaderParams.m2 ?? 1.0;
     
-    const pTheta1 = perturbFixed.theta1;
-    const pTheta2 = perturbFixed.theta2;
-    const pOmega1 = perturbFixed.omega1;
-    const pOmega2 = perturbFixed.omega2;
+    const s = config.perturbScale ?? 1.0;
+    const pTheta1 = perturbFixed.theta1 * s;
+    const pTheta2 = perturbFixed.theta2 * s;
+    const pOmega1 = perturbFixed.omega1 * s;
+    const pOmega2 = perturbFixed.omega2 * s;
     
     for (let py = 0; py < height; py++) {
         for (let px = 0; px < width; px++) {

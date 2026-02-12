@@ -18,6 +18,7 @@ class CPUChaosMapRenderer {
             theta1: 0.00001, theta2: 0.00001, omega1: 0.00001, omega2: 0.00001,
             l1: 0.00001, l2: 0.00001, m1: 0.00001, m2: 0.00001
         };
+        this.perturbScale = 1.0;
         
         this.shouldStop = false;
         this.isRendering = false;
@@ -124,7 +125,8 @@ class CPUChaosMapRenderer {
                             integrator: this.integrator,
                             colorMapping: this.colorMapping,
                             cyclePeriod: this.cyclePeriod,
-                            perturbFixed: this.perturbFixed
+                            perturbFixed: this.perturbFixed,
+                            perturbScale: this.perturbScale ?? 1.0
                         }
                     }
                 });

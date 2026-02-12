@@ -321,6 +321,7 @@ ChaosMapRenderer.prototype.generateMapCPU = async function(res, loading, progres
     this.cpuChaosRenderer.cyclePeriod = this.cyclePeriod;
     this.cpuChaosRenderer.hueMapping = this.hueMapping;
     this.cpuChaosRenderer.perturbFixed = this.baseParams.perturbFixed;
+    this.cpuChaosRenderer.perturbScale = this.baseParams.perturbScale;
     
     // Initialize worker pool
     this.cpuChaosRenderer.initWorkers();
@@ -447,21 +448,22 @@ ChaosMapRenderer.prototype.renderTile = function(offsetX, offsetY, width, height
     setUniform('u_maxIter', gl.uniform1i, this.baseParams.maxIter);
     setUniform('u_threshold', gl.uniform1f, this.baseParams.threshold);
     
-    // Perturbation uniforms
+    // Perturbation uniforms - scaled by master scalar
     const pFixed = this.baseParams.perturbFixed;
     const pRand = this.baseParams.perturbRandom;
+    const s = this.baseParams.perturbScale;
     setUniform('u_perturbFixedAB', gl.uniform4f, 
-        pFixed.theta1, pFixed.theta2, pFixed.omega1, pFixed.omega2);
+        pFixed.theta1 * s, pFixed.theta2 * s, pFixed.omega1 * s, pFixed.omega2 * s);
     setUniform('u_perturbFixedCD', gl.uniform4f, 
-        pFixed.l1, pFixed.l2, pFixed.m1, pFixed.m2);
+        pFixed.l1 * s, pFixed.l2 * s, pFixed.m1 * s, pFixed.m2 * s);
     setUniform('u_perturbCenterAB', gl.uniform4f, 
-        pRand.theta1.center, pRand.theta2.center, pRand.omega1.center, pRand.omega2.center);
+        pRand.theta1.center * s, pRand.theta2.center * s, pRand.omega1.center * s, pRand.omega2.center * s);
     setUniform('u_perturbCenterCD', gl.uniform4f, 
-        pRand.l1.center, pRand.l2.center, pRand.m1.center, pRand.m2.center);
+        pRand.l1.center * s, pRand.l2.center * s, pRand.m1.center * s, pRand.m2.center * s);
     setUniform('u_perturbStdAB', gl.uniform4f, 
-        pRand.theta1.std, pRand.theta2.std, pRand.omega1.std, pRand.omega2.std);
+        pRand.theta1.std * s, pRand.theta2.std * s, pRand.omega1.std * s, pRand.omega2.std * s);
     setUniform('u_perturbStdCD', gl.uniform4f, 
-        pRand.l1.std, pRand.l2.std, pRand.m1.std, pRand.m2.std);
+        pRand.l1.std * s, pRand.l2.std * s, pRand.m1.std * s, pRand.m2.std * s);
     setUniform('u_perturbMode', gl.uniform1i, this.baseParams.perturbMode === 'random' ? 1 : 0);
     setUniform('u_integrator', gl.uniform1i, this.baseParams.integrator === 'verlet' ? 1 : 0);
     setUniform('u_seed', gl.uniform1f, 0);
@@ -545,21 +547,22 @@ ChaosMapRenderer.prototype.renderTileToImageData = async function(offsetX, offse
     setUniform('u_maxIter', gl.uniform1i, this.baseParams.maxIter);
     setUniform('u_threshold', gl.uniform1f, this.baseParams.threshold);
     
-    // Perturbation uniforms
+    // Perturbation uniforms - scaled by master scalar
     const pFixed = this.baseParams.perturbFixed;
     const pRand = this.baseParams.perturbRandom;
+    const s = this.baseParams.perturbScale;
     setUniform('u_perturbFixedAB', gl.uniform4f, 
-        pFixed.theta1, pFixed.theta2, pFixed.omega1, pFixed.omega2);
+        pFixed.theta1 * s, pFixed.theta2 * s, pFixed.omega1 * s, pFixed.omega2 * s);
     setUniform('u_perturbFixedCD', gl.uniform4f, 
-        pFixed.l1, pFixed.l2, pFixed.m1, pFixed.m2);
+        pFixed.l1 * s, pFixed.l2 * s, pFixed.m1 * s, pFixed.m2 * s);
     setUniform('u_perturbCenterAB', gl.uniform4f, 
-        pRand.theta1.center, pRand.theta2.center, pRand.omega1.center, pRand.omega2.center);
+        pRand.theta1.center * s, pRand.theta2.center * s, pRand.omega1.center * s, pRand.omega2.center * s);
     setUniform('u_perturbCenterCD', gl.uniform4f, 
-        pRand.l1.center, pRand.l2.center, pRand.m1.center, pRand.m2.center);
+        pRand.l1.center * s, pRand.l2.center * s, pRand.m1.center * s, pRand.m2.center * s);
     setUniform('u_perturbStdAB', gl.uniform4f, 
-        pRand.theta1.std, pRand.theta2.std, pRand.omega1.std, pRand.omega2.std);
+        pRand.theta1.std * s, pRand.theta2.std * s, pRand.omega1.std * s, pRand.omega2.std * s);
     setUniform('u_perturbStdCD', gl.uniform4f, 
-        pRand.l1.std, pRand.l2.std, pRand.m1.std, pRand.m2.std);
+        pRand.l1.std * s, pRand.l2.std * s, pRand.m1.std * s, pRand.m2.std * s);
     setUniform('u_perturbMode', gl.uniform1i, this.baseParams.perturbMode === 'random' ? 1 : 0);
     setUniform('u_integrator', gl.uniform1i, this.baseParams.integrator === 'verlet' ? 1 : 0);
     setUniform('u_seed', gl.uniform1f, 0);

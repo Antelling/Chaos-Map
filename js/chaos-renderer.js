@@ -64,7 +64,8 @@ class ChaosMapRenderer {
                 l2: { center: 0.0, std: 0.00001 },
                 m1: { center: 0.0, std: 0.00001 },
                 m2: { center: 0.0, std: 0.00001 }
-            }
+            },
+            perturbScale: 1.0  // Master scalar for all perturbations
         };
         
         // Rendering state
@@ -124,6 +125,7 @@ class ChaosMapRenderer {
         this.cpuChaosRenderer.colorMapping = this.colorMapping;
         this.cpuChaosRenderer.cyclePeriod = this.cyclePeriod;
         this.cpuChaosRenderer.hueMapping = this.hueMapping;
+        this.cpuChaosRenderer.perturbScale = this.baseParams.perturbScale;
 
         this.setupEventListeners();
         this.resizeCanvas();
