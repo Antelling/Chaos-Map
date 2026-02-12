@@ -41,29 +41,29 @@ class CPUPendulumSimulation {
         this.energyFrameCounter = 0;
         
         // Current states for main and perturbed pendulums
-        // Use Float32Array for better performance and automatic 32-bit precision
+        // Use 64-bit double precision for maximum accuracy
         if (options.initialState1) {
-            this.state1 = new Float32Array([
-                options.initialState1.theta1,
-                options.initialState1.theta2,
-                options.initialState1.omega1,
-                options.initialState1.omega2
-            ]);
+            this.state1 = {
+                theta1: options.initialState1.theta1,
+                theta2: options.initialState1.theta2,
+                omega1: options.initialState1.omega1,
+                omega2: options.initialState1.omega2
+            };
         } else {
-            this.state1 = new Float32Array([1.0, 0.5, 0, 0]);
+            this.state1 = { theta1: 1.0, theta2: 0.5, omega1: 0, omega2: 0 };
         }
         if (options.initialState2) {
-            this.state2 = new Float32Array([
-                options.initialState2.theta1,
-                options.initialState2.theta2,
-                options.initialState2.omega1,
-                options.initialState2.omega2
-            ]);
+            this.state2 = {
+                theta1: options.initialState2.theta1,
+                theta2: options.initialState2.theta2,
+                omega1: options.initialState2.omega1,
+                omega2: options.initialState2.omega2
+            };
         } else {
-            this.state2 = new Float32Array([1.00001, 0.50001, 0, 0]);
+            this.state2 = { theta1: 1.00001, theta2: 0.50001, omega1: 0, omega2: 0 };
         }
         
-        // Trail history - use typed arrays for better memory layout
+        // Trail history - use flat arrays for better memory layout
         // Each trail point: x, y (alpha is constant, don't store)
         this.trail1 = [];
         this.trail2 = [];
@@ -84,9 +84,6 @@ class CPUPendulumSimulation {
         this.pos1 = { x1: 0, y1: 0, x2: 0, y2: 0 };
         this.pos2 = { x1: 0, y1: 0, x2: 0, y2: 0 };
         this.updatePositions();
-        
-        // Pre-allocate arrays for acceleration calculations to avoid GC
-        this._accelTemp = new Float32Array(2);
     }
     
     // Pre-compute scale based on pendulum lengths
@@ -99,66 +96,64 @@ class CPUPendulumSimulation {
     }
     
     // Compute accelerations given current state
-    // Uses object pooling to avoid allocations
-    computeAccelerations(s, l1, l2, m1, m2, out) {
+    computeAccelerations(s, l1, l2, m1, m2) {
         const M = this.M;
-        const delta = s[0] - s[1]; // theta1 - theta2
+        const delta = s.theta1 - s.theta2;
         const sinDelta = Math.sin(delta);
         const cosDelta = Math.cos(delta);
         
         const alphaDenom = m1 + m2 * sinDelta * sinDelta;
         
-        const sinTheta1 = Math.sin(s[0]);
-        const sinTheta2 = Math.sin(s[1]);
+        const sinTheta1 = Math.sin(s.theta1);
+        const sinTheta2 = Math.sin(s.theta2);
         
-        const num1 = -m2 * l1 * s[2] * s[2] * sinDelta * cosDelta
-                   - m2 * l2 * s[3] * s[3] * sinDelta
+        const num1 = -m2 * l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
+                   - m2 * l2 * s.omega2 * s.omega2 * sinDelta
                    - M * this.g * sinTheta1
                    + m2 * this.g * sinTheta2 * cosDelta;
         
-        const num2 = M * l1 * s[2] * s[2] * sinDelta
-                   + m2 * l2 * s[3] * s[3] * sinDelta * cosDelta
+        const num2 = M * l1 * s.omega1 * s.omega1 * sinDelta
+                   + m2 * l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
                    + M * this.g * sinTheta1 * cosDelta
                    - M * this.g * sinTheta2;
         
-        out[0] = num1 / (l1 * alphaDenom);
-        out[1] = num2 / (l2 * alphaDenom);
+        const alpha1 = num1 / (l1 * alphaDenom);
+        const alpha2 = num2 / (l2 * alphaDenom);
+        
+        return { alpha1, alpha2 };
     }
     
     // Velocity Verlet integrator - symplectic, matches stepPhysicsVerlet from shader
-    // Uses Float32Array for automatic 32-bit precision without Math.fround overhead
     stepVerlet(s, l1, l2, m1, m2) {
         const dt = this.dt;
         const halfDt = 0.5 * dt;
         
-        // Current accelerations (re-use temp array)
-        this.computeAccelerations(s, l1, l2, m1, m2, this._accelTemp);
-        const alpha1 = this._accelTemp[0];
-        const alpha2 = this._accelTemp[1];
+        // Current accelerations
+        const { alpha1, alpha2 } = this.computeAccelerations(s, l1, l2, m1, m2);
         
         // Half-step velocity
-        const omega1Half = s[2] + halfDt * alpha1;
-        const omega2Half = s[3] + halfDt * alpha2;
+        const omega1Half = s.omega1 + halfDt * alpha1;
+        const omega2Half = s.omega2 + halfDt * alpha2;
         
         // Full position update
-        s[0] += dt * omega1Half;
-        s[1] += dt * omega2Half;
-        s[2] = omega1Half;
-        s[3] = omega2Half;
+        s.theta1 += dt * omega1Half;
+        s.theta2 += dt * omega2Half;
+        s.omega1 = omega1Half;
+        s.omega2 = omega2Half;
         
         // New accelerations
-        this.computeAccelerations(s, l1, l2, m1, m2, this._accelTemp);
+        const { alpha1: newAlpha1, alpha2: newAlpha2 } = this.computeAccelerations(s, l1, l2, m1, m2);
         
         // Final half-step velocity
-        s[2] += halfDt * this._accelTemp[0];
-        s[3] += halfDt * this._accelTemp[1];
+        s.omega1 += halfDt * newAlpha1;
+        s.omega2 += halfDt * newAlpha2;
     }
     
-    // Measure divergence between two states using Float32Arrays
+    // Measure divergence between two states
     measureDivergence(s1, s2) {
         // Circular difference for angles
-        let dTheta1 = s1[0] - s2[0];
-        let dTheta2 = s1[1] - s2[1];
+        let dTheta1 = s1.theta1 - s2.theta1;
+        let dTheta2 = s1.theta2 - s2.theta2;
         
         // Normalize angle differences
         if (dTheta1 > Math.PI) dTheta1 -= 2 * Math.PI;
@@ -167,18 +162,18 @@ class CPUPendulumSimulation {
         if (dTheta2 > Math.PI) dTheta2 -= 2 * Math.PI;
         else if (dTheta2 < -Math.PI) dTheta2 += 2 * Math.PI;
         
-        const dOmega1 = s1[2] - s2[2];
-        const dOmega2 = s1[3] - s2[3];
+        const dOmega1 = s1.omega1 - s2.omega1;
+        const dOmega2 = s1.omega2 - s2.omega2;
         
         return Math.sqrt(dTheta1 * dTheta1 + dTheta2 * dTheta2 + dOmega1 * dOmega1 + dOmega2 * dOmega2);
     }
     
-    // Convert state to Cartesian coordinates - inline for speed
+    // Convert state to Cartesian coordinates
     stateToPosition(s, out) {
-        const sinT1 = Math.sin(s[0]);
-        const cosT1 = Math.cos(s[0]);
-        const sinT2 = Math.sin(s[1]);
-        const cosT2 = Math.cos(s[1]);
+        const sinT1 = Math.sin(s.theta1);
+        const cosT1 = Math.cos(s.theta1);
+        const sinT2 = Math.sin(s.theta2);
+        const cosT2 = Math.cos(s.theta2);
         
         out.x1 = this.l1 * sinT1;
         out.y1 = this.l1 * cosT1;
@@ -228,10 +223,10 @@ class CPUPendulumSimulation {
     // Compute and store energy (called periodically, not every frame)
     computeAndStoreEnergy() {
         const s = this.state1;
-        const sinT1 = Math.sin(s[0]);
-        const cosT1 = Math.cos(s[0]);
-        const sinT2 = Math.sin(s[1]);
-        const cosT2 = Math.cos(s[1]);
+        const sinT1 = Math.sin(s.theta1);
+        const cosT1 = Math.cos(s.theta1);
+        const sinT2 = Math.sin(s.theta2);
+        const cosT2 = Math.cos(s.theta2);
         
         // Heights (origin at pivot, y increases downward in physics coords)
         const y1 = -this.l1 * cosT1;
@@ -241,10 +236,10 @@ class CPUPendulumSimulation {
         const pe = this.m1 * this.g * y1 + this.m2 * this.g * y2;
         
         // Velocities
-        const vx1 = this.l1 * s[2] * cosT1;
-        const vy1 = -this.l1 * s[2] * sinT1;
-        const vx2 = vx1 + this.l2 * s[3] * cosT2;
-        const vy2 = vy1 - this.l2 * s[3] * sinT2;
+        const vx1 = this.l1 * s.omega1 * cosT1;
+        const vy1 = -this.l1 * s.omega1 * sinT1;
+        const vx2 = vx1 + this.l2 * s.omega2 * cosT2;
+        const vy2 = vy1 - this.l2 * s.omega2 * sinT2;
         
         // Kinetic energy
         const ke = 0.5 * this.m1 * (vx1*vx1 + vy1*vy1) + 0.5 * this.m2 * (vx2*vx2 + vy2*vy2);
@@ -606,18 +601,18 @@ class CPUPendulumSimulation {
             this._updateScale();
         }
         
-        // Reset states with Float32Array
+        // Reset states with 64-bit double precision
         if (options.initialState1) {
-            this.state1[0] = options.initialState1.theta1;
-            this.state1[1] = options.initialState1.theta2;
-            this.state1[2] = options.initialState1.omega1;
-            this.state1[3] = options.initialState1.omega2;
+            this.state1.theta1 = options.initialState1.theta1;
+            this.state1.theta2 = options.initialState1.theta2;
+            this.state1.omega1 = options.initialState1.omega1;
+            this.state1.omega2 = options.initialState1.omega2;
         }
         if (options.initialState2) {
-            this.state2[0] = options.initialState2.theta1;
-            this.state2[1] = options.initialState2.theta2;
-            this.state2[2] = options.initialState2.omega1;
-            this.state2[3] = options.initialState2.omega2;
+            this.state2.theta1 = options.initialState2.theta1;
+            this.state2.theta2 = options.initialState2.theta2;
+            this.state2.omega1 = options.initialState2.omega1;
+            this.state2.omega2 = options.initialState2.omega2;
         }
         if (options.l1 !== undefined) this.l1 = options.l1;
         if (options.l2 !== undefined) this.l2 = options.l2;
