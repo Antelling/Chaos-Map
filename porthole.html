@@ -1,0 +1,2502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chaos Map - Porthole View</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:wght@400;500;600&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Cormorant Garamond', serif;
+            background: #0a0a0a;
+            min-height: 100vh;
+            color: #d4c5a3;
+            overflow-x: hidden;
+            font-size: 18px;
+        }
+
+        /* Main Container */
+        .vessel-container {
+            min-height: 100vh;
+            background-image: url('assets/skeu-textures/wooden_planks.png');
+            background-size: 800px;
+            background-position: center top;
+            position: relative;
+            padding: 0;
+            padding-top: 0;
+        }
+
+        .vessel-container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, 
+                rgba(10, 10, 15, 0.4) 0%, 
+                rgba(20, 15, 10, 0.3) 50%,
+                rgba(10, 10, 15, 0.5) 100%);
+            pointer-events: none;
+        }
+
+        /* Art Deco Corner Decorations - flush to corners */
+        .corner-decoration {
+            position: absolute;
+            width: 280px;
+            height: 180px;
+            pointer-events: none;
+            z-index: 10;
+            opacity: 0.95;
+        }
+
+        .corner-decoration.left {
+            top: 0;
+            left: 0;
+            background-image: url('assets/skeu-textures/art-deco-corner-decoration.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: top left;
+        }
+
+        .corner-decoration.right {
+            top: 0;
+            right: 0;
+            background-image: url('assets/skeu-textures/art-deco-corner-decoration.png');
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: top left;
+            transform: scaleX(-1);
+        }
+
+        /* Content Wrapper */
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 3rem 1rem 1rem 1rem;
+        }
+
+        /* Porthole Section - centered with ~3cm top margin (3rem ≈ 3cm at default font sizes) */
+        .porthole-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding-top: 3rem; /* ~3cm equivalent using rem */
+        }
+
+        /* Main Porthole - the circular canvas viewport */
+        .main-porthole-container {
+            position: relative;
+            /* Size the viewport (circular canvas area) */
+            width: min(60vmin, 60vh);
+            aspect-ratio: 1;
+        }
+
+        .porthole-viewport {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            overflow: hidden;
+            background: #0a0a0a;
+            box-shadow: 
+                inset 0 0 60px rgba(0, 0, 0, 0.9),
+                inset 0 0 120px rgba(0, 0, 0, 0.6);
+            z-index: 100;
+            /* Vertical margin to create more space */
+            margin: 2rem 0;
+        }
+
+        /* Porthole frame overlay - positioned via JS, outside layout flow */
+        .porthole-frame {
+            position: absolute; /* Outside normal flow but scrolls with container, positioned by JS */
+            pointer-events: none; /* Let clicks pass through to canvas */
+            z-index: 200; /* Above the viewport (z-index: 100) */
+            /* Image is not closely cropped, so we need to scale it appropriately */
+            /* The porthole.png is 1536x1024, with the circular opening roughly centered */
+            /* We'll calculate exact position/size in JS based on viewport element */
+            opacity: 0; /* Hidden initially, shown by JS after positioning */
+            transition: opacity 0.3s ease;
+        }
+        
+        .porthole-frame.loaded {
+            opacity: 1;
+        }
+
+        #chaosMapCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: crosshair;
+        }
+
+        /* Wooden Action Bar */
+        .wooden-action-bar {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            padding: 1.5rem 0;
+            margin-bottom: 1rem;
+        }
+
+        .action-btn {
+            padding: 0.75rem 2rem;
+            background: linear-gradient(180deg, #5a4a2a 0%, #3d2f0a 100%);
+            border: 2px solid #c9b037;
+            border-radius: 4px;
+            color: #f0e8c0;
+            font-family: 'Cinzel', serif;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 
+                0 4px 15px rgba(0, 0, 0, 0.5),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                0 0 0 1px #2a2005;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .action-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50%;
+            background: linear-gradient(180deg, rgba(201, 176, 55, 0.15) 0%, transparent 100%);
+            pointer-events: none;
+        }
+
+        .action-btn:hover {
+            background: linear-gradient(180deg, #6a5a3a 0%, #4d3f1a 100%);
+            border-color: #e9d057;
+            box-shadow: 
+                0 6px 25px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.2),
+                0 0 0 1px #2a2005,
+                0 0 20px rgba(201, 176, 55, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .action-btn.secondary {
+            background: linear-gradient(180deg, #2a3028 0%, #1a2015 100%);
+            border-color: #6b5a3a;
+        }
+
+        .action-btn.secondary:hover {
+            background: linear-gradient(180deg, #3a4038 0%, #2a3025 100%);
+            border-color: #8b7a5a;
+        }
+
+        /* Small Portholes Container - positioned via JS for circle packing */
+        .small-portholes {
+            position: relative;
+            /* Wider than main porthole so small portholes can be near edges */
+            width: 100%;
+            height: 0; /* Will be set by JS */
+            margin-top: 0;
+        }
+
+        .small-porthole {
+            position: absolute;
+            width: min(220px, 25vmin);
+            aspect-ratio: 1;
+            transform: translate(-50%, -50%); /* Center on the calculated point */
+        }
+        
+        /* Horizontal positioning - 200px margin using rem (12.5rem ≈ 200px at 16px base) */
+        .small-portholes > .small-porthole:nth-of-type(1) {
+            left: 12.5rem !important; /* ~200px from left edge, DPI independent */
+        }
+        
+        .small-portholes > .small-porthole:nth-of-type(2) {
+            left: calc(100% - 12.5rem) !important; /* ~200px from right edge */
+        }
+
+        .small-porthole-border {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 5px solid #8b6914;
+            box-shadow: 
+                0 0 0 2px #3d2f0a,
+                0 0 0 5px #8b6914,
+                0 0 0 7px #3d2f0a,
+                inset 0 0 30px rgba(0, 0, 0, 0.6),
+                0 8px 30px rgba(0, 0, 0, 0.6);
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .small-porthole-viewport {
+            position: absolute;
+            inset: 8px;
+            border-radius: 50%;
+            overflow: hidden;
+            background: #0a0a0a;
+            box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.95);
+        }
+
+        .small-porthole-viewport canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .small-porthole-label {
+            display: none;
+        }
+
+        /* Hover Info Display */
+        .hover-info-display {
+            position: absolute;
+            bottom: 32%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.75);
+            border: 1px solid rgba(139, 105, 20, 0.5);
+            border-radius: 8px;
+            padding: 0.6rem 1.2rem;
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 0.9rem;
+            color: #d4c5a3;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 20;
+            white-space: nowrap;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .hover-info-display.visible {
+            opacity: 1;
+        }
+
+        /* Loading Indicator */
+        .loading-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+            border-radius: 50%;
+        }
+
+        .loading-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(139, 105, 20, 0.2);
+            border-top-color: #c9b037;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .loading-text {
+            margin-top: 1rem;
+            font-family: 'Cinzel', serif;
+            font-size: 0.9rem;
+            color: #c9b037;
+            letter-spacing: 0.15em;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Controls Section - Full width with bronze border */
+        .controls-outer {
+            border-top: 6px solid #8b6914;
+            border-radius: 0;
+            padding: 0;
+            box-shadow: 
+                0 0 0 1px #3d2f0a,
+                0 10px 40px rgba(0, 0, 0, 0.6),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            width: 100vw;
+            margin-left: calc(-50vw + 50%);
+            margin-right: calc(-50vw + 50%);
+            position: relative;
+        }
+
+        .controls-section {
+            background-image: url('assets/skeu-textures/leather-texture.png');
+            background-size: cover;
+            background-position: center;
+            border-radius: 0;
+            padding: 1.5rem;
+            position: relative;
+        }
+
+        .controls-section::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(180deg, 
+                rgba(50, 40, 30, 0.92) 0%, 
+                rgba(40, 35, 28, 0.95) 100%);
+            border-radius: 0;
+            pointer-events: none;
+        }
+
+        .controls-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Control Grid - separate felt panels */
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+
+        /* Individual Felt Panels */
+        .felt-panel {
+            background-image: url('assets/skeu-textures/dark-green-velvet-texture.png');
+            background-size: cover;
+            background-position: center;
+            border-radius: 10px;
+            padding: 1.25rem;
+            box-shadow: 
+                inset 0 12px 40px rgba(0, 0, 0, 0.95),
+                inset 0 6px 20px rgba(0, 0, 0, 0.85),
+                inset 0 3px 10px rgba(0, 0, 0, 0.7),
+                inset 0 1px 4px rgba(0, 0, 0, 0.5),
+                0 1px 0 rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(0, 0, 0, 0.6);
+            position: relative;
+        }
+
+        .felt-panel::before {
+            content: '';
+            position: absolute;
+            inset: 4px;
+            background: rgba(20, 35, 25, 0.85);
+            border-radius: 6px;
+            pointer-events: none;
+            box-shadow: inset 0 8px 25px rgba(0, 0, 0, 0.8);
+        }
+
+        .felt-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .control-section-title {
+            font-family: 'Cinzel', serif;
+            font-size: 1.1rem;
+            color: #c9b037;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            margin-bottom: 0.75rem;
+            border-bottom: 1px solid rgba(201, 176, 55, 0.3);
+            padding-bottom: 0.4rem;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 0.6rem;
+        }
+
+        .form-group label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 1rem;
+            color: #a8b5a0;
+            margin-bottom: 0.3rem;
+            font-family: 'Cormorant Garamond', serif;
+        }
+
+        .form-group input[type="number"],
+        .form-group select {
+            width: 23%;
+            min-width: 70px;
+            padding: 0.4rem 0.5rem;
+            background: linear-gradient(180deg, #0d0d0d 0%, #151515 100%);
+            border: 1px solid #2a2518;
+            border-radius: 4px;
+            color: #c9b037;
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            box-shadow: 
+                inset 0 3px 8px rgba(0, 0, 0, 0.8),
+                0 1px 0 rgba(255, 255, 255, 0.05);
+        }
+
+        .form-group select {
+            width: 100%;
+        }
+
+        /* Number input stepper buttons - dark style */
+        .form-group input[type="number"]::-webkit-inner-spin-button,
+        .form-group input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: inner-spin-button !important;
+            opacity: 1;
+            background: #1a1a1a;
+            filter: invert(0.8) sepia(0.5) hue-rotate(10deg);
+        }
+
+        /* Dropdown options - dark background */
+        .form-group select option {
+            background: #1a1810;
+            color: #d4c5a3;
+        }
+
+        .form-group select:focus option {
+            background: #1a1810;
+        }
+
+        .form-group input[type="number"]:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #c9b037;
+            box-shadow: 0 0 8px rgba(201, 176, 55, 0.25);
+        }
+
+        .form-group input[type="checkbox"] {
+            accent-color: #c9b037;
+        }
+
+        /* Range Inputs */
+        .range-inputs {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .range-inputs input {
+            flex: 1;
+        }
+
+        .range-inputs span {
+            color: #8b6914;
+            font-size: 0.9rem;
+        }
+
+        /* Dimension Select Row */
+        .dim-select-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            margin-bottom: 0.4rem;
+        }
+
+        .dim-select-row label {
+            font-size: 1rem;
+            color: #c9b037;
+            min-width: 24px;
+            font-weight: 600;
+        }
+
+        /* Checkbox Label */
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            font-size: 1rem;
+            color: #a8b5a0;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.6rem 1.25rem;
+            background: linear-gradient(180deg, #3a4538 0%, #252f22 100%);
+            border: 1px solid #5a6b54;
+            border-radius: 6px;
+            color: #c9d4c0;
+            font-family: 'Cinzel', serif;
+            font-size: 0.95rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .btn:hover {
+            background: linear-gradient(180deg, #4a5548 0%, #353f32 100%);
+            border-color: #7a8b74;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-primary {
+            background: linear-gradient(180deg, #6b5a20 0%, #4a4010 100%);
+            border-color: #8b6914;
+            color: #f0e8c0;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(180deg, #7b6a30 0%, #5a5020 100%);
+        }
+
+        .button-row {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.75rem;
+        }
+
+        .button-row .btn {
+            font-size: 0.9rem;
+        }
+
+        /* Zoom Overlay */
+        .zoom-overlay {
+            position: fixed;
+            border: 2px dashed rgba(201, 176, 55, 0.8);
+            background: rgba(201, 176, 55, 0.15);
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            border-radius: 4px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            body {
+                font-size: 16px;
+            }
+
+            .vessel-container {
+                padding: 0;
+                padding-top: 0;
+            }
+
+            .content-wrapper {
+                padding: 2rem 0.5rem 0.5rem 0.5rem;
+            }
+
+            .corner-decoration {
+                width: 150px;
+                height: 100px;
+            }
+
+            .main-porthole-container {
+                width: min(70vmin, 70vh);
+            }
+
+            .small-portholes {
+                width: 100%;
+            }
+            
+            .small-portholes > .small-porthole:nth-of-type(1) {
+                left: 6rem !important; /* ~96px on mobile */
+            }
+            
+            .small-portholes > .small-porthole:nth-of-type(2) {
+                left: calc(100% - 6rem) !important;
+            }
+
+            .control-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+
+            .control-section-title {
+                font-size: 0.95rem;
+            }
+
+            .form-group input[type="number"] {
+                width: 30%;
+            }
+
+            .wooden-action-bar {
+                flex-direction: column;
+                align-items: center;
+                padding: 1rem 0.5rem;
+            }
+
+            .action-btn {
+                width: 100%;
+                max-width: 280px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="vessel-container">
+        <!-- Art Deco Corner Decorations -->
+        <div class="corner-decoration left"></div>
+        <div class="corner-decoration right"></div>
+
+        <div class="content-wrapper">
+            <!-- Porthole Section -->
+            <div class="porthole-section">
+                <!-- Main Porthole -->
+                <div class="main-porthole-container" id="mainPorthole">
+                    <div class="porthole-viewport">
+                        <canvas id="chaosMapCanvas" width="1024" height="1024"></canvas>
+                        <div class="loading-overlay" id="loadingOverlay">
+                            <div class="loading-spinner"></div>
+                            <div class="loading-text">Computing...</div>
+                        </div>
+                    </div>
+                    <div class="porthole-frame"></div>
+                    <div class="hover-info-display" id="hoverInfoDisplay">Hover over map</div>
+                </div>
+
+                <!-- Small Portholes -->
+                <div class="small-portholes">
+                    <!-- Pendulum Preview -->
+                    <div class="small-porthole">
+                        <div class="small-porthole-viewport">
+                            <canvas id="pendulumPreviewCanvas" width="220" height="220"></canvas>
+                        </div>
+                        <div class="small-porthole-border"></div>
+                        <div class="small-porthole-label">Pendulum</div>
+                    </div>
+
+                    <!-- Transformation Preview -->
+                    <div class="small-porthole">
+                        <div class="small-porthole-viewport">
+                            <canvas id="transformPreviewCanvas" width="220" height="220"></canvas>
+                        </div>
+                        <div class="small-porthole-border"></div>
+                        <div class="small-porthole-label">Transformation</div>
+                    </div>
+                </div>
+
+                <!-- Wooden Action Bar -->
+                <div class="wooden-action-bar">
+                    <button class="action-btn secondary" id="zoomOutBtn">Zoom Out</button>
+                    <button class="action-btn" id="downloadBtn">Download</button>
+                </div>
+            </div>
+
+            <!-- Controls Section -->
+            <div class="controls-outer">
+                <div class="controls-section">
+                    <div class="controls-content">
+                        <div class="control-grid">
+                            <!-- Basis Point Parameters -->
+                            <div class="felt-panel">
+                                <div class="felt-content">
+                                    <h3 class="control-section-title">Basis Point</h3>
+                                    
+                                    <div class="form-group">
+                                        <label>θ₁ (Angle 1)</label>
+                                        <input type="number" id="basisTheta1" value="0" step="0.01">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>θ₂ (Angle 2)</label>
+                                        <input type="number" id="basisTheta2" value="0" step="0.01">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>ω₁ (Velocity 1)</label>
+                                        <input type="number" id="basisOmega1" value="0" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>ω₂ (Velocity 2)</label>
+                                        <input type="number" id="basisOmega2" value="0" step="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>L₁ (Length 1)</label>
+                                        <input type="number" id="basisL1" value="1" step="0.1" min="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>L₂ (Length 2)</label>
+                                        <input type="number" id="basisL2" value="1" step="0.1" min="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>m₁ (Mass 1)</label>
+                                        <input type="number" id="basisM1" value="1" step="0.1" min="0.1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>m₂ (Mass 2)</label>
+                                        <input type="number" id="basisM2" value="1" step="0.1" min="0.1">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Transformation Controls (both main and preview) -->
+                            <div class="felt-panel">
+                                <div class="felt-content">
+                                    <h3 class="control-section-title">Transformation</h3>
+                                    
+                                    <!-- Main View Controls -->
+                                    <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(139, 105, 20, 0.3);">
+                                        <div style="font-size: 0.75rem; color: #c9b037; margin-bottom: 0.5rem;">Main View</div>
+                                        <div class="dim-select-row">
+                                            <label>X →</label>
+                                            <select id="mainXDimSelect">
+                                                <option value="theta1" selected>θ₁ (Angle 1)</option>
+                                                <option value="theta2">θ₂ (Angle 2)</option>
+                                                <option value="omega1">ω₁ (Velocity 1)</option>
+                                                <option value="omega2">ω₂ (Velocity 2)</option>
+                                                <option value="l1">L₁ (Length 1)</option>
+                                                <option value="l2">L₂ (Length 2)</option>
+                                                <option value="m1">m₁ (Mass 1)</option>
+                                                <option value="m2">m₂ (Mass 2)</option>
+                                            </select>
+                                        </div>
+                                        <div class="range-inputs">
+                                            <input type="number" id="mainXMin" value="-3.14" step="0.1">
+                                            <span>to</span>
+                                            <input type="number" id="mainXMax" value="3.14" step="0.1">
+                                        </div>
+                                        
+                                        <div class="dim-select-row" style="margin-top: 0.5rem;">
+                                            <label>Y →</label>
+                                            <select id="mainYDimSelect">
+                                                <option value="theta1">θ₁ (Angle 1)</option>
+                                                <option value="theta2" selected>θ₂ (Angle 2)</option>
+                                                <option value="omega1">ω₁ (Velocity 1)</option>
+                                                <option value="omega2">ω₂ (Velocity 2)</option>
+                                                <option value="l1">L₁ (Length 1)</option>
+                                                <option value="l2">L₂ (Length 2)</option>
+                                                <option value="m1">m₁ (Mass 1)</option>
+                                                <option value="m2">m₂ (Mass 2)</option>
+                                            </select>
+                                        </div>
+                                        <div class="range-inputs">
+                                            <input type="number" id="mainYMin" value="-3.14" step="0.1">
+                                            <span>to</span>
+                                            <input type="number" id="mainYMax" value="3.14" step="0.1">
+                                        </div>
+
+                                        <div class="form-group" style="margin-top: 0.5rem; margin-bottom: 0;">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="mainDeltaMode">
+                                                <span>Delta mode (add to basis)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Preview View Controls -->
+                                    <div>
+                                        <div style="font-size: 0.75rem; color: #8af; margin-bottom: 0.5rem;">Preview View</div>
+                                        <div class="dim-select-row">
+                                            <label>X →</label>
+                                            <select id="previewXDimSelect">
+                                                <option value="theta1">θ₁ (Angle 1)</option>
+                                                <option value="theta2">θ₂ (Angle 2)</option>
+                                                <option value="omega1" selected>ω₁ (Velocity 1)</option>
+                                                <option value="omega2">ω₂ (Velocity 2)</option>
+                                                <option value="l1">L₁ (Length 1)</option>
+                                                <option value="l2">L₂ (Length 2)</option>
+                                                <option value="m1">m₁ (Mass 1)</option>
+                                                <option value="m2">m₂ (Mass 2)</option>
+                                            </select>
+                                        </div>
+                                        <div class="range-inputs">
+                                            <input type="number" id="previewXMin" value="-10" step="0.1">
+                                            <span>to</span>
+                                            <input type="number" id="previewXMax" value="10" step="0.1">
+                                        </div>
+                                        
+                                        <div class="dim-select-row" style="margin-top: 0.5rem;">
+                                            <label>Y →</label>
+                                            <select id="previewYDimSelect">
+                                                <option value="theta1">θ₁ (Angle 1)</option>
+                                                <option value="theta2">θ₂ (Angle 2)</option>
+                                                <option value="omega1">ω₁ (Velocity 1)</option>
+                                                <option value="omega2" selected>ω₂ (Velocity 2)</option>
+                                                <option value="l1">L₁ (Length 1)</option>
+                                                <option value="l2">L₂ (Length 2)</option>
+                                                <option value="m1">m₁ (Mass 1)</option>
+                                                <option value="m2">m₂ (Mass 2)</option>
+                                            </select>
+                                        </div>
+                                        <div class="range-inputs">
+                                            <input type="number" id="previewYMin" value="-10" step="0.1">
+                                            <span>to</span>
+                                            <input type="number" id="previewYMax" value="10" step="0.1">
+                                        </div>
+
+                                        <div class="form-group" style="margin-top: 0.5rem; margin-bottom: 0;">
+                                            <label class="checkbox-label">
+                                                <input type="checkbox" id="previewDeltaMode">
+                                                <span>Delta mode (add to basis)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div style="margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid rgba(139, 105, 20, 0.2); font-size: 0.7rem; color: #888; font-style: italic;">
+                                        Hover main map to preview • Click to apply preview to main
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Physics Parameters -->
+                            <div class="felt-panel">
+                                <div class="felt-content">
+                                    <h3 class="control-section-title">Physics</h3>
+                                    
+                                    <div class="form-group">
+                                        <label>Integrator</label>
+                                        <select id="integratorSelect">
+                                            <option value="rk4">RK4 (Runge-Kutta 4)</option>
+                                            <option value="verlet" selected>Verlet (Symplectic)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Time Step (dt)</label>
+                                        <input type="number" id="dtInput" value="0.002" step="0.001" min="0.0001">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Max Iterations</label>
+                                        <input type="number" id="maxIterInput" value="20000" step="100" min="100">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Divergence Threshold</label>
+                                        <input type="number" id="thresholdInput" value="0.05" step="0.01" min="0.001">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Gravity (g)</label>
+                                        <input type="number" id="gInput" value="9.81" step="0.1">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Rendering Parameters -->
+                            <div class="felt-panel">
+                                <div class="felt-content">
+                                    <h3 class="control-section-title">Rendering</h3>
+                                    
+                                    <div class="form-group">
+                                        <label>Resolution</label>
+                                        <select id="resolutionSelect">
+                                            <option value="256">256 x 256 (Fast)</option>
+                                            <option value="512" selected>512 x 512</option>
+                                            <option value="1024">1024 x 1024</option>
+                                            <option value="2048">2048 x 2048</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Render Mode</label>
+                                        <select id="renderModeSelect">
+                                            <option value="gpu" selected>GPU (WebGL)</option>
+                                            <option value="cpu">CPU (64-bit)</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Color Mapping</label>
+                                        <select id="colorMappingSelect">
+                                            <option value="0" selected>Linear</option>
+                                            <option value="1">Logarithmic</option>
+                                            <option value="2">Square Root</option>
+                                            <option value="3">Exponential</option>
+                                            <option value="4">S-Curve</option>
+                                            <option value="5">Gamma 0.4</option>
+                                            <option value="8">Cyclical</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Color Palette</label>
+                                        <select id="paletteSelect">
+                                            <option value="0" selected>Rainbow</option>
+                                            <option value="1">Heatmap</option>
+                                            <option value="2">Cool</option>
+                                            <option value="3">Hot</option>
+                                            <option value="4">Grayscale</option>
+                                            <option value="5">Viridis</option>
+                                            <option value="6">Plasma</option>
+                                            <option value="7">Inverted Rainbow</option>
+                                        </select>
+                                    </div>
+
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zoom Overlay -->
+    <div class="zoom-overlay" id="zoomOverlay"></div>
+
+    <!-- Include existing JavaScript modules -->
+    <script src="js/constants.js"></script>
+    <script src="js/transform.js"></script>
+    <script src="js/cpu-physics.js"></script>
+    <script src="js/chaos-renderer-cpu.js"></script>
+    <script src="js/pendulum-sim-cpu.js"></script>
+
+    <!-- WebGL Shaders (from original chaos-map.html) -->
+    <script id="chaos-vertex-shader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+        }
+    </script>
+
+    <script id="chaos-fragment-shader" type="x-shader/x-fragment">
+        precision highp float;
+        
+        uniform vec2 u_resolution;
+        uniform vec2 u_tileOffset;
+        uniform vec2 u_tileSize;
+        uniform float u_l1;
+        uniform float u_l2;
+        uniform float u_m1;
+        uniform float u_m2;
+        uniform float u_g;
+        uniform float u_dt;
+        uniform int u_maxIter;
+        uniform float u_threshold;
+        uniform int u_perturbMode;
+        uniform vec4 u_perturbFixedAB;
+        uniform vec4 u_perturbFixedCD;
+        uniform vec4 u_perturbCenterAB;
+        uniform vec4 u_perturbCenterCD;
+        uniform vec4 u_perturbStdAB;
+        uniform vec4 u_perturbStdCD;
+        uniform float u_seed;
+        uniform sampler2D u_noiseTexture;
+        uniform int u_colorMapping;
+        uniform float u_cyclePeriod;
+        uniform int u_hueMapping;
+        
+        uniform int u_layerMode;
+        uniform int u_integrator;
+        uniform vec4 u_fixedState;
+        uniform float u_scaleX;
+        uniform float u_scaleY;
+        uniform float u_centerX;
+        uniform float u_centerY;
+        uniform ivec2 u_mappedDims;
+        uniform bool u_deltaMode;
+        
+        const float PI = 3.14159265359;
+        const int MAX_ITERATIONS = 100000;
+        
+        struct State {
+            float theta1;
+            float theta2;
+            float omega1;
+            float omega2;
+        };
+        
+        vec4 sampleNoise(vec2 fragCoord) {
+            vec2 texCoord = fragCoord / u_tileSize;
+            return texture2D(u_noiseTexture, texCoord);
+        }
+        
+        void computeAccelerations(State s, float l1, float l2, float m1, float m2, out float alpha1, out float alpha2) {
+            float M = m1 + m2;
+            float delta = s.theta1 - s.theta2;
+            float sinDelta = sin(delta);
+            float cosDelta = cos(delta);
+            
+            float alpha_denom = m1 + m2 * sinDelta * sinDelta;
+            
+            float num1 = -m2 * l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
+                       - m2 * l2 * s.omega2 * s.omega2 * sinDelta
+                       - M * u_g * sin(s.theta1)
+                       + m2 * u_g * sin(s.theta2) * cosDelta;
+            
+            float num2 = M * l1 * s.omega1 * s.omega1 * sinDelta
+                       + m2 * l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
+                       + M * u_g * sin(s.theta1) * cosDelta
+                       - M * u_g * sin(s.theta2);
+            
+            alpha1 = num1 / (l1 * alpha_denom);
+            alpha2 = num2 / (l2 * alpha_denom);
+        }
+        
+        State stepPhysicsRK4(State s, float l1, float l2, float m1, float m2) {
+            State k1, k2, k3, k4, temp;
+            float dt = u_dt;
+            
+            computeAccelerations(s, l1, l2, m1, m2, k1.omega1, k1.omega2);
+            k1.theta1 = s.omega1;
+            k1.theta2 = s.omega2;
+            
+            temp.theta1 = s.theta1 + 0.5 * dt * k1.theta1;
+            temp.theta2 = s.theta2 + 0.5 * dt * k1.theta2;
+            temp.omega1 = s.omega1 + 0.5 * dt * k1.omega1;
+            temp.omega2 = s.omega2 + 0.5 * dt * k1.omega2;
+            computeAccelerations(temp, l1, l2, m1, m2, k2.omega1, k2.omega2);
+            k2.theta1 = temp.omega1;
+            k2.theta2 = temp.omega2;
+            
+            temp.theta1 = s.theta1 + 0.5 * dt * k2.theta1;
+            temp.theta2 = s.theta2 + 0.5 * dt * k2.theta2;
+            temp.omega1 = s.omega1 + 0.5 * dt * k2.omega1;
+            temp.omega2 = s.omega2 + 0.5 * dt * k2.omega2;
+            computeAccelerations(temp, l1, l2, m1, m2, k3.omega1, k3.omega2);
+            k3.theta1 = temp.omega1;
+            k3.theta2 = temp.omega2;
+            
+            temp.theta1 = s.theta1 + dt * k3.theta1;
+            temp.theta2 = s.theta2 + dt * k3.theta2;
+            temp.omega1 = s.omega1 + dt * k3.omega1;
+            temp.omega2 = s.omega2 + dt * k3.omega2;
+            computeAccelerations(temp, l1, l2, m1, m2, k4.omega1, k4.omega2);
+            k4.theta1 = temp.omega1;
+            k4.theta2 = temp.omega2;
+            
+            State next;
+            next.theta1 = s.theta1 + dt * (k1.theta1 + 2.0 * k2.theta1 + 2.0 * k3.theta1 + k4.theta1) / 6.0;
+            next.theta2 = s.theta2 + dt * (k1.theta2 + 2.0 * k2.theta2 + 2.0 * k3.theta2 + k4.theta2) / 6.0;
+            next.omega1 = s.omega1 + dt * (k1.omega1 + 2.0 * k2.omega1 + 2.0 * k3.omega1 + k4.omega1) / 6.0;
+            next.omega2 = s.omega2 + dt * (k1.omega2 + 2.0 * k2.omega2 + 2.0 * k3.omega2 + k4.omega2) / 6.0;
+            
+            return next;
+        }
+        
+        State stepPhysicsVerlet(State s, float l1, float l2, float m1, float m2) {
+            float dt = u_dt;
+            float halfDt = 0.5 * dt;
+            
+            float alpha1, alpha2;
+            computeAccelerations(s, l1, l2, m1, m2, alpha1, alpha2);
+            
+            float omega1_half = s.omega1 + halfDt * alpha1;
+            float omega2_half = s.omega2 + halfDt * alpha2;
+            
+            State next;
+            next.theta1 = s.theta1 + dt * omega1_half;
+            next.theta2 = s.theta2 + dt * omega2_half;
+            next.omega1 = omega1_half;
+            next.omega2 = omega2_half;
+            
+            computeAccelerations(next, l1, l2, m1, m2, alpha1, alpha2);
+            
+            next.omega1 += halfDt * alpha1;
+            next.omega2 += halfDt * alpha2;
+            
+            return next;
+        }
+        
+        State stepPhysics(State s, float l1, float l2, float m1, float m2) {
+            if (u_integrator == 1) {
+                return stepPhysicsVerlet(s, l1, l2, m1, m2);
+            } else {
+                return stepPhysicsRK4(s, l1, l2, m1, m2);
+            }
+        }
+        
+        float circularDiff(float a, float b) {
+            float d = a - b;
+            if (d > PI) d -= 2.0 * PI;
+            if (d < -PI) d += 2.0 * PI;
+            return d;
+        }
+        
+        float measureDivergence(State s1, State s2) {
+            float dTheta = circularDiff(s1.theta1, s2.theta1);
+            float dTheta2 = circularDiff(s1.theta2, s2.theta2);
+            float dOmega = s1.omega1 - s2.omega1;
+            float dOmega2 = s1.omega2 - s2.omega2;
+            return sqrt(dTheta * dTheta + dTheta2 * dTheta2 + dOmega * dOmega + dOmega2 * dOmega2);
+        }
+        
+        vec3 hsv2rgb(float h, float s, float v) {
+            float c = v * s;
+            float x = c * (1.0 - abs(mod(h * 6.0, 2.0) - 1.0));
+            float m = v - c;
+            
+            vec3 rgb;
+            if (h < 1.0/6.0) rgb = vec3(c, x, 0.0);
+            else if (h < 2.0/6.0) rgb = vec3(x, c, 0.0);
+            else if (h < 3.0/6.0) rgb = vec3(0.0, c, x);
+            else if (h < 4.0/6.0) rgb = vec3(0.0, x, c);
+            else if (h < 5.0/6.0) rgb = vec3(x, 0.0, c);
+            else rgb = vec3(c, 0.0, x);
+            
+            return rgb + m;
+        }
+        
+        vec3 mapHueToRGB(float t, int palette) {
+            if (palette == 0) {
+                float hue = (1.0 - t) * 0.85;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            else if (palette == 1) {
+                if (t < 0.33) {
+                    float u = t / 0.33;
+                    return vec3(u, 0.0, 0.0);
+                } else if (t < 0.66) {
+                    float u = (t - 0.33) / 0.33;
+                    return vec3(1.0, u, 0.0);
+                } else {
+                    float u = (t - 0.66) / 0.34;
+                    return vec3(1.0, 1.0, u);
+                }
+            }
+            else if (palette == 2) {
+                float hue = 0.67 - t * 0.5;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            else if (palette == 3) {
+                if (t < 0.5) {
+                    float u = t / 0.5;
+                    return vec3(u, 0.0, 0.0);
+                } else {
+                    float u = (t - 0.5) / 0.5;
+                    return vec3(1.0, u, 0.0);
+                }
+            }
+            else if (palette == 4) {
+                return vec3(1.0 - t);
+            }
+            else if (palette == 5) {
+                vec3 a = vec3(0.5, 0.0, 0.5);
+                vec3 b = vec3(0.0, 0.5, 1.0);
+                vec3 c = vec3(0.0, 1.0, 0.5);
+                vec3 d = vec3(1.0, 1.0, 0.0);
+                
+                float u = 1.0 - t;
+                if (u < 0.33) {
+                    float x = u / 0.33;
+                    return mix(a, b, x);
+                } else if (u < 0.66) {
+                    float x = (u - 0.33) / 0.33;
+                    return mix(b, c, x);
+                } else {
+                    float x = (u - 0.66) / 0.34;
+                    return mix(c, d, x);
+                }
+            }
+            else if (palette == 6) {
+                vec3 a = vec3(0.0, 0.0, 0.0);
+                vec3 b = vec3(0.5, 0.0, 0.5);
+                vec3 c = vec3(1.0, 0.0, 0.5);
+                vec3 d = vec3(1.0, 1.0, 0.0);
+                
+                float u = 1.0 - t;
+                if (u < 0.33) {
+                    float x = u / 0.33;
+                    return mix(a, b, x);
+                } else if (u < 0.66) {
+                    float x = (u - 0.33) / 0.33;
+                    return mix(b, c, x);
+                } else {
+                    float x = (u - 0.66) / 0.34;
+                    return mix(c, d, x);
+                }
+            }
+            else if (palette == 7) {
+                float hue = t * 0.85;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            
+            float hue = (1.0 - t) * 0.85;
+            return hsv2rgb(hue, 1.0, 1.0);
+        }
+        
+        void main() {
+            vec2 fragCoord = vec2(gl_FragCoord.x, u_tileSize.y - gl_FragCoord.y);
+            vec2 pixelCoord = fragCoord + u_tileOffset;
+            vec2 normalizedCoord = pixelCoord / u_resolution;
+            
+            State s1, s2;
+            float localL1 = u_l1;
+            float localL2 = u_l2;
+            float localM1 = u_m1;
+            float localM2 = u_m2;
+            
+            int dim1 = u_mappedDims.x;
+            int dim2 = u_mappedDims.y;
+            
+            // Note: Flip Y so that top of canvas = maxY, bottom = minY (standard convention)
+            float outX = u_centerX + (normalizedCoord.x * 2.0 - 1.0) * u_scaleX;
+            float outY = u_centerY + ((1.0 - normalizedCoord.y) * 2.0 - 1.0) * u_scaleY;
+            
+            s1.theta1 = u_fixedState.x;
+            s1.theta2 = u_fixedState.y;
+            s1.omega1 = u_fixedState.z;
+            s1.omega2 = u_fixedState.w;
+            
+            if (dim1 == 0) s1.theta1 = u_deltaMode ? u_fixedState.x + outX : outX;
+            else if (dim1 == 1) s1.theta2 = u_deltaMode ? u_fixedState.y + outX : outX;
+            else if (dim1 == 2) s1.omega1 = u_deltaMode ? u_fixedState.z + outX : outX;
+            else if (dim1 == 3) s1.omega2 = u_deltaMode ? u_fixedState.w + outX : outX;
+            else if (dim1 == 4) localL1 = max(0.1, u_deltaMode ? u_l1 + outX : outX);
+            else if (dim1 == 5) localL2 = max(0.1, u_deltaMode ? u_l2 + outX : outX);
+            else if (dim1 == 6) localM1 = max(0.1, u_deltaMode ? u_m1 + outX : outX);
+            else if (dim1 == 7) localM2 = max(0.1, u_deltaMode ? u_m2 + outX : outX);
+            
+            if (dim2 == 0) s1.theta1 = u_deltaMode ? u_fixedState.x + outY : outY;
+            else if (dim2 == 1) s1.theta2 = u_deltaMode ? u_fixedState.y + outY : outY;
+            else if (dim2 == 2) s1.omega1 = u_deltaMode ? u_fixedState.z + outY : outY;
+            else if (dim2 == 3) s1.omega2 = u_deltaMode ? u_fixedState.w + outY : outY;
+            else if (dim2 == 4) localL1 = max(0.1, u_deltaMode ? u_l1 + outY : outY);
+            else if (dim2 == 5) localL2 = max(0.1, u_deltaMode ? u_l2 + outY : outY);
+            else if (dim2 == 6) localM1 = max(0.1, u_deltaMode ? u_m1 + outY : outY);
+            else if (dim2 == 7) localM2 = max(0.1, u_deltaMode ? u_m2 + outY : outY);
+            
+            s2 = s1;
+            
+            if (u_perturbMode == 1) {
+                vec4 noise1 = sampleNoise(fragCoord);
+                vec4 noise2 = sampleNoise(fragCoord + vec2(0.5));
+                
+                float u1 = noise1.r;
+                float u2 = noise1.g;
+                float u3 = noise1.b;
+                float u4 = noise1.a;
+                
+                float r1 = sqrt(-2.0 * log(u1 + 0.0001));
+                float theta1 = 2.0 * PI * u2;
+                float r2 = sqrt(-2.0 * log(u3 + 0.0001));
+                float theta2 = 2.0 * PI * u4;
+                
+                float n1 = r1 * cos(theta1);
+                float n2 = r1 * sin(theta1);
+                float n3 = r2 * cos(theta2);
+                float n4 = r2 * sin(theta2);
+                
+                float u5 = noise2.r;
+                float u6 = noise2.g;
+                float u7 = noise2.b;
+                float u8 = noise2.a;
+                
+                float r3 = sqrt(-2.0 * log(u5 + 0.0001));
+                float theta3 = 2.0 * PI * u6;
+                float r4 = sqrt(-2.0 * log(u7 + 0.0001));
+                float theta4 = 2.0 * PI * u8;
+                
+                float n5 = r3 * cos(theta3);
+                float n6 = r3 * sin(theta3);
+                float n7 = r4 * cos(theta4);
+                float n8 = r4 * sin(theta4);
+                
+                s2.theta1 += u_perturbCenterAB.x + n1 * u_perturbStdAB.x;
+                s2.theta2 += u_perturbCenterAB.y + n2 * u_perturbStdAB.y;
+                s2.omega1 += u_perturbCenterAB.z + n3 * u_perturbStdAB.z;
+                s2.omega2 += u_perturbCenterAB.w + n4 * u_perturbStdAB.w;
+                localL1 = max(0.1, localL1 + u_perturbCenterCD.x + n5 * u_perturbStdCD.x);
+                localL2 = max(0.1, localL2 + u_perturbCenterCD.y + n6 * u_perturbStdCD.y);
+                localM1 = max(0.1, localM1 + u_perturbCenterCD.z + n7 * u_perturbStdCD.z);
+                localM2 = max(0.1, localM2 + u_perturbCenterCD.w + n8 * u_perturbStdCD.w);
+            } else {
+                s2.theta1 += u_perturbFixedAB.x;
+                s2.theta2 += u_perturbFixedAB.y;
+                s2.omega1 += u_perturbFixedAB.z;
+                s2.omega2 += u_perturbFixedAB.w;
+                localL1 = max(0.1, localL1 + u_perturbFixedCD.x);
+                localL2 = max(0.1, localL2 + u_perturbFixedCD.y);
+                localM1 = max(0.1, localM1 + u_perturbFixedCD.z);
+                localM2 = max(0.1, localM2 + u_perturbFixedCD.w);
+            }
+            
+            int divergenceIter = u_maxIter;
+            bool diverged = false;
+            
+            for (int i = 0; i < MAX_ITERATIONS; i++) {
+                if (i >= u_maxIter) break;
+                
+                s1 = stepPhysics(s1, localL1, localL2, localM1, localM2);
+                s2 = stepPhysics(s2, localL1, localL2, localM1, localM2);
+                
+                float dist = measureDivergence(s1, s2);
+                
+                if (dist > u_threshold && !diverged) {
+                    divergenceIter = i;
+                    diverged = true;
+                    break;
+                }
+            }
+            
+            vec3 color;
+            if (!diverged) {
+                color = vec3(1.0, 1.0, 1.0);
+            } else {
+                float iter = float(divergenceIter);
+                float maxIter = float(u_maxIter);
+                float t;
+                
+                if (u_colorMapping == 0) {
+                    t = iter / maxIter;
+                } else if (u_colorMapping == 1) {
+                    t = log(1.0 + iter) / log(1.0 + maxIter);
+                } else if (u_colorMapping == 2) {
+                    t = sqrt(iter / maxIter);
+                } else if (u_colorMapping == 3) {
+                    t = (exp(iter / maxIter) - 1.0) / (2.718281828 - 1.0);
+                } else if (u_colorMapping == 4) {
+                    float x = iter / maxIter;
+                    t = x * x * (3.0 - 2.0 * x);
+                } else if (u_colorMapping == 5) {
+                    t = pow(iter / maxIter, 0.4);
+                } else if (u_colorMapping == 8) {
+                    float cyclePeriod = max(u_cyclePeriod, 1.0);
+                    t = fract(iter / cyclePeriod);
+                } else {
+                    t = iter / maxIter;
+                }
+                
+                color = mapHueToRGB(t, u_hueMapping);
+            }
+            
+            gl_FragColor = vec4(color, 1.0);
+        }
+    </script>
+
+    <!-- Main Application Script -->
+    <script>
+
+        // ============================================
+        // Chaos Map Porthole - Main Application
+        // Uses existing js/ modules
+        // ============================================
+
+        class PortholeApp {
+            constructor() {
+                // Create a minimal transformation stack
+                this.stack = new TransformationStack();
+                
+                // Main porthole uses angle mapping (theta1, theta2) by default
+                const mainLayer = this.stack.getLastLayer();
+                mainLayer.dim1 = 'theta1';
+                mainLayer.dim2 = 'theta2';
+                mainLayer.min1 = -3.14;
+                mainLayer.max1 = 3.14;
+                mainLayer.min2 = -3.14;
+                mainLayer.max2 = 3.14;
+                mainLayer.deltaMode = false;
+
+                // Separate preview layer for the small porthole
+                // Defaults to velocity mapping
+                this.previewLayer = {
+                    dim1: 'omega1',
+                    dim2: 'omega2',
+                    min1: -10,
+                    max1: 10,
+                    min2: -10,
+                    max2: 10,
+                    deltaMode: false
+                };
+
+                // Debounce timer for preview generation
+                this.previewDebounceTimer = null;
+                this.isGeneratingPreview = false;
+
+                // Base parameters
+                this.baseParams = {
+                    g: 9.81,
+                    dt: 0.002,
+                    maxIter: 20000,
+                    threshold: 0.05,
+                    integrator: 'verlet',
+                    resolution: 512,
+                    tileSize: 64,
+                    perturbMode: 'random',
+                    perturbScale: 1.0,
+                    perturbFixed: {
+                        theta1: 0.00001, theta2: 0.00001, omega1: 0.00001, omega2: 0.00001,
+                        l1: 0.00001, l2: 0.00001, m1: 0.00001, m2: 0.00001
+                    },
+                    perturbRandom: {
+                        theta1: { center: 0.0, std: 0.00001 },
+                        theta2: { center: 0.0, std: 0.00001 },
+                        omega1: { center: 0.0, std: 0.00001 },
+                        omega2: { center: 0.0, std: 0.00001 },
+                        l1: { center: 0.0, std: 0.00001 },
+                        l2: { center: 0.0, std: 0.00001 },
+                        m1: { center: 0.0, std: 0.00001 },
+                        m2: { center: 0.0, std: 0.00001 }
+                    }
+                };
+
+                this.colorMapping = 0;
+                this.hueMapping = 0;
+                this.cyclePeriod = 500;
+                this.renderMode = 'gpu';
+                this.pendulumSimSpeed = 5;
+
+                // Zoom history
+                this.zoomHistory = [];
+
+                // Initialize components
+                this.canvas = document.getElementById('chaosMapCanvas');
+                this.mainCtx = this.canvas.getContext('2d');
+                this.tileCanvas = document.createElement('canvas');
+                this.tileCanvas.width = this.baseParams.tileSize;
+                this.tileCanvas.height = this.baseParams.tileSize;
+                this.tileGl = null;
+                this.tileProgram = null;
+
+                // Pendulum preview
+                this.pendulumPreviewCanvas = document.getElementById('pendulumPreviewCanvas');
+                this.hoverCPUSim = null;
+                this.hoverDebounceTimer = null;
+                this.hoverAnimationId = null;
+
+                // Transformation preview
+                this.transformPreviewCanvas = document.getElementById('transformPreviewCanvas');
+                this.previewGl = null;
+                this.previewProgram = null;
+
+                // State
+                this.isRendering = false;
+                this.shouldStop = false;
+                this.hoverPosition = null;
+                this.zoomState = { isDragging: false, dragStart: null, dragCurrent: null };
+
+                this.init();
+            }
+
+            init() {
+                this.setupWebGL();
+                this.setupPreviewWebGL();
+                this.setupEventListeners();
+                this.updateUIFromState();
+                this.positionPortholeFrame();
+                this.positionSmallPortholes();
+                this.generateMap();
+                this.renderPreview(); // Initial preview render
+                
+                // Reposition on resize
+                window.addEventListener('resize', () => {
+                    this.positionPortholeFrame();
+                    this.positionSmallPortholes();
+                });
+            }
+
+            positionSmallPortholes() {
+                const container = document.querySelector('.small-portholes');
+                const smallPortholes = container.querySelectorAll('.small-porthole');
+                if (smallPortholes.length !== 2) return;
+
+                const largeContainer = document.querySelector('.main-porthole-container');
+                if (!largeContainer) return;
+
+                // Get actual positions from DOM
+                const largeViewport = document.querySelector('.porthole-viewport');
+                const largeRect = largeViewport.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+                const smallWidth = smallPortholes[0].offsetWidth;
+                
+                // Large circle center (relative to container)
+                const largeCenterX = largeRect.left + largeRect.width / 2 - containerRect.left;
+                const largeCenterY = largeRect.top + largeRect.height / 2 - containerRect.top;
+                
+                // Radii
+                const largeRadius = largeRect.width / 2;
+                const smallRadius = smallWidth / 2;
+                
+                // Target distance between centers for 150px edge gap
+                const targetDistance = largeRadius + smallRadius + 150;
+                
+                // Small portholes X positions - read computed CSS value to ensure we get the rem-converted pixels
+                const getComputedLeft = (el) => parseFloat(getComputedStyle(el).left);
+                const leftX = getComputedLeft(smallPortholes[0]);
+                const rightX = getComputedLeft(smallPortholes[1]);
+                
+                // Calculate Y: dy = sqrt(D² - dx²), then Y = largeCenterY + dy
+                const calculateY = (smallX) => {
+                    const dx = smallX - largeCenterX;
+                    const dy = Math.sqrt(targetDistance * targetDistance - dx * dx);
+                    return largeCenterY + dy;
+                };
+                
+                // Set Y positions (X is handled by CSS)
+                smallPortholes[0].style.top = `${calculateY(leftX)}px`;
+                smallPortholes[1].style.top = `${calculateY(rightX)}px`;
+                
+                // Container height
+                const maxY = Math.max(calculateY(leftX), calculateY(rightX));
+                container.style.height = `${maxY + smallRadius + 40}px`;
+            }
+
+            positionPortholeFrame() {
+                const container = document.querySelector('.main-porthole-container');
+                const viewport = document.querySelector('.porthole-viewport');
+                const frame = document.querySelector('.porthole-frame');
+                if (!container || !viewport || !frame) return;
+
+                const containerRect = container.getBoundingClientRect();
+                const viewportRect = viewport.getBoundingClientRect();
+                
+                // The porthole.png is 1536x1024 (3:2 aspect ratio)
+                // The circular opening is roughly centered in the image
+                // Looking at the image: the circle appears to take up about 65-70% of the width
+                // and is centered horizontally, slightly above vertical center due to the hinge
+                
+                // We want the porthole frame to wrap around the viewport
+                // The frame image has extra padding/ornamentation around the circle
+                
+                // Calculate the scale needed so the inner circle of the PNG
+                // matches our viewport size
+                // Based on visual inspection, the circular opening in the PNG 
+                // is approximately 65% of the image width.
+                // We use a smaller ratio to make the porthole frame larger relative to viewport
+                const PNG_CIRCLE_RATIO = 0.35;
+                const pngAspectRatio = 1536 / 1024; // 1.5
+                
+                // We want the PNG's inner circle to match the viewport
+                // So PNG_width * 0.65 = viewport_width
+                // Therefore: PNG_width = viewport_width / 0.65
+                const targetPngWidth = viewportRect.width / PNG_CIRCLE_RATIO;
+                const targetPngHeight = targetPngWidth / pngAspectRatio;
+                
+                // Calculate position relative to the container (since we're using position: absolute)
+                // The viewport is centered in the container, so we calculate offset from container edge
+                const viewportOffsetLeft = viewportRect.left - containerRect.left;
+                const viewportOffsetTop = viewportRect.top - containerRect.top;
+                
+                // Center the frame over the viewport, with a slight downward shift
+                // for visual balance (the hinge mechanism makes it look top-heavy)
+                const VERTICAL_OFFSET = 60; // pixels - adjust for visual centering
+                const frameLeft = viewportOffsetLeft + (viewportRect.width - targetPngWidth) / 2;
+                const frameTop = viewportOffsetTop + (viewportRect.height - targetPngHeight) / 2 + VERTICAL_OFFSET;
+                
+                frame.style.width = `${targetPngWidth}px`;
+                frame.style.height = `${targetPngHeight}px`;
+                frame.style.left = `${frameLeft}px`;
+                frame.style.top = `${frameTop}px`;
+                frame.style.backgroundImage = "url('assets/skeu-textures/porthole.png')";
+                frame.style.backgroundSize = 'contain';
+                frame.style.backgroundRepeat = 'no-repeat';
+                frame.style.backgroundPosition = 'center';
+                
+                // Fade in once positioned
+                frame.classList.add('loaded');
+            }
+
+            setupWebGL() {
+                this.tileGl = this.tileCanvas.getContext('webgl', {
+                    antialias: false,
+                    preserveDrawingBuffer: true,
+                    powerPreference: 'high-performance'
+                });
+
+                if (!this.tileGl) {
+                    console.error('WebGL not supported');
+                    return;
+                }
+
+                this.compileTileShaders();
+            }
+
+            setupPreviewWebGL() {
+                this.transformPreviewCanvas.width = 220;
+                this.transformPreviewCanvas.height = 220;
+
+                this.previewGl = this.transformPreviewCanvas.getContext('webgl', {
+                    antialias: false,
+                    preserveDrawingBuffer: true
+                });
+
+                if (!this.previewGl) return;
+
+                const gl = this.previewGl;
+                const vsSource = document.getElementById('chaos-vertex-shader').textContent;
+                const fsSource = document.getElementById('chaos-fragment-shader').textContent;
+
+                const vertexShader = this.createShader(gl, gl.VERTEX_SHADER, vsSource);
+                const fragmentShader = this.createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+                if (!vertexShader || !fragmentShader) return;
+
+                this.previewProgram = this.createProgram(gl, vertexShader, fragmentShader);
+
+                const positions = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+                const positionLocation = gl.getAttribLocation(this.previewProgram, 'a_position');
+                gl.enableVertexAttribArray(positionLocation);
+                gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+            }
+
+            compileTileShaders() {
+                const gl = this.tileGl;
+                if (!gl) return;
+
+                const vsSource = document.getElementById('chaos-vertex-shader').textContent;
+                const fsSource = document.getElementById('chaos-fragment-shader').textContent;
+
+                const vertexShader = this.createShader(gl, gl.VERTEX_SHADER, vsSource);
+                const fragmentShader = this.createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+                if (!vertexShader || !fragmentShader) return;
+
+                this.tileProgram = this.createProgram(gl, vertexShader, fragmentShader);
+
+                const positions = new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]);
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+                const positionLocation = gl.getAttribLocation(this.tileProgram, 'a_position');
+                gl.enableVertexAttribArray(positionLocation);
+                gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+            }
+
+            createShader(gl, type, source) {
+                const shader = gl.createShader(type);
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+                return shader;
+            }
+
+            createProgram(gl, vs, fs) {
+                const program = gl.createProgram();
+                gl.attachShader(program, vs);
+                gl.attachShader(program, fs);
+                gl.linkProgram(program);
+                if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                    console.error('Program link error:', gl.getProgramInfoLog(program));
+                    gl.deleteProgram(program);
+                    return null;
+                }
+                return program;
+            }
+
+            generateNoiseData(width, height) {
+                const size = width * height * 4;
+                const noiseData = new Uint8Array(size);
+                const MAX_CRYPTO_BYTES = 65536;
+
+                if (window.crypto && window.crypto.getRandomValues) {
+                    for (let offset = 0; offset < size; offset += MAX_CRYPTO_BYTES) {
+                        const chunkSize = Math.min(MAX_CRYPTO_BYTES, size - offset);
+                        const chunk = new Uint8Array(noiseData.buffer, offset, chunkSize);
+                        window.crypto.getRandomValues(chunk);
+                    }
+                } else {
+                    for (let i = 0; i < size; i++) {
+                        noiseData[i] = Math.floor(Math.random() * 256);
+                    }
+                }
+                return noiseData;
+            }
+
+            updateNoiseTexture(gl, width, height) {
+                if (!gl) return null;
+                const noiseData = this.generateNoiseData(width, height);
+                const texture = gl.createTexture();
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, noiseData);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                return texture;
+            }
+
+            async generateMap() {
+                if (this.isRendering) {
+                    this.shouldStop = true;
+                    await new Promise(r => setTimeout(r, 50));
+                }
+
+                this.isRendering = true;
+                this.shouldStop = false;
+
+                const loadingOverlay = document.getElementById('loadingOverlay');
+                loadingOverlay.classList.add('active');
+
+                const res = parseInt(document.getElementById('resolutionSelect').value);
+                this.canvas.width = res;
+                this.canvas.height = res;
+
+                this.mainCtx.fillStyle = '#0a0a0a';
+                this.mainCtx.fillRect(0, 0, res, res);
+
+                const tileSize = this.baseParams.tileSize;
+                const tilesX = Math.ceil(res / tileSize);
+                const tilesY = Math.ceil(res / tileSize);
+                const totalTiles = tilesX * tilesY;
+
+                let tileCount = 0;
+
+                for (let ty = 0; ty < tilesY; ty++) {
+                    for (let tx = 0; tx < tilesX; tx++) {
+                        if (this.shouldStop) break;
+
+                        const tileOffsetX = tx * tileSize;
+                        const tileOffsetY = ty * tileSize;
+                        const actualTileW = Math.min(tileSize, res - tileOffsetX);
+                        const actualTileH = Math.min(tileSize, res - tileOffsetY);
+
+                        await this.renderTile(tileOffsetX, tileOffsetY, actualTileW, actualTileH);
+
+                        this.mainCtx.drawImage(this.tileCanvas, tileOffsetX, tileOffsetY);
+
+                        tileCount++;
+                        await new Promise(r => requestAnimationFrame(r));
+                    }
+                }
+
+                loadingOverlay.classList.remove('active');
+                this.isRendering = false;
+            }
+
+            async renderTile(offsetX, offsetY, width, height) {
+                const gl = this.tileGl;
+                const program = this.tileProgram;
+                if (!gl || !program) return;
+
+                const layer = this.stack.getLastLayer();
+                const basis = this.stack.getLastSampledPoint().state;
+                const res = this.canvas.width;
+
+                if (this.tileCanvas.width !== width || this.tileCanvas.height !== height) {
+                    this.tileCanvas.width = width;
+                    this.tileCanvas.height = height;
+                }
+
+                gl.viewport(0, 0, width, height);
+                gl.useProgram(program);
+
+                const setUniform = (name, setter, ...values) => {
+                    const loc = gl.getUniformLocation(program, name);
+                    if (loc !== null) setter.call(gl, loc, ...values);
+                };
+
+                const scaleX = (layer.max1 - layer.min1) / 2;
+                const scaleY = (layer.max2 - layer.min2) / 2;
+                const centerX = (layer.min1 + layer.max1) / 2;
+                const centerY = (layer.min2 + layer.max2) / 2;
+
+                setUniform('u_resolution', gl.uniform2f, res, res);
+                setUniform('u_tileOffset', gl.uniform2f, offsetX, offsetY);
+                setUniform('u_tileSize', gl.uniform2f, width, height);
+                setUniform('u_l1', gl.uniform1f, basis.l1);
+                setUniform('u_l2', gl.uniform1f, basis.l2);
+                setUniform('u_m1', gl.uniform1f, basis.m1);
+                setUniform('u_m2', gl.uniform1f, basis.m2);
+                setUniform('u_g', gl.uniform1f, this.baseParams.g);
+                setUniform('u_dt', gl.uniform1f, this.baseParams.dt);
+                setUniform('u_maxIter', gl.uniform1i, this.baseParams.maxIter);
+                setUniform('u_threshold', gl.uniform1f, this.baseParams.threshold);
+
+                const pFixed = this.baseParams.perturbFixed;
+                const s = this.baseParams.perturbScale;
+                setUniform('u_perturbFixedAB', gl.uniform4f, pFixed.theta1 * s, pFixed.theta2 * s, pFixed.omega1 * s, pFixed.omega2 * s);
+                setUniform('u_perturbFixedCD', gl.uniform4f, pFixed.l1 * s, pFixed.l2 * s, pFixed.m1 * s, pFixed.m2 * s);
+                setUniform('u_perturbCenterAB', gl.uniform4f, 0, 0, 0, 0);
+                setUniform('u_perturbCenterCD', gl.uniform4f, 0, 0, 0, 0);
+                setUniform('u_perturbStdAB', gl.uniform4f, 0.00001 * s, 0.00001 * s, 0.00001 * s, 0.00001 * s);
+                setUniform('u_perturbStdCD', gl.uniform4f, 0.00001 * s, 0.00001 * s, 0.00001 * s, 0.00001 * s);
+                setUniform('u_perturbMode', gl.uniform1i, 1);
+                setUniform('u_integrator', gl.uniform1i, this.baseParams.integrator === 'verlet' ? 1 : 0);
+                setUniform('u_seed', gl.uniform1f, 0);
+                setUniform('u_colorMapping', gl.uniform1i, this.colorMapping);
+                setUniform('u_cyclePeriod', gl.uniform1f, this.cyclePeriod);
+                setUniform('u_hueMapping', gl.uniform1i, this.hueMapping);
+
+                const noiseTex = this.updateNoiseTexture(gl, width, height);
+                setUniform('u_noiseTexture', gl.uniform1i, 0);
+
+                setUniform('u_layerMode', gl.uniform1i, 1);
+                setUniform('u_fixedState', gl.uniform4f, basis.theta1, basis.theta2, basis.omega1, basis.omega2);
+                setUniform('u_scaleX', gl.uniform1f, scaleX);
+                setUniform('u_scaleY', gl.uniform1f, scaleY);
+                setUniform('u_centerX', gl.uniform1f, centerX);
+                setUniform('u_centerY', gl.uniform1f, centerY);
+                setUniform('u_mappedDims', gl.uniform2i, DIM_TO_INDEX[layer.dim1], DIM_TO_INDEX[layer.dim2]);
+                setUniform('u_deltaMode', gl.uniform1i, layer.deltaMode ? 1 : 0);
+
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                gl.deleteTexture(noiseTex);
+            }
+
+            triggerPreviewRender() {
+                // Debounced preview generation - only render after 500ms of no changes
+                if (this.previewDebounceTimer) {
+                    clearTimeout(this.previewDebounceTimer);
+                }
+                this.previewDebounceTimer = setTimeout(() => {
+                    this.renderPreview();
+                }, 500);
+            }
+
+            renderPreview() {
+                // Render the transformation preview at the center point
+                // Used when parameters change or on initial load
+                this.renderTransformPreviewAtPosition(0.5, 0.5);
+            }
+
+            scheduleHoverPreview(nx, ny) {
+                // Schedule a preview render after 500ms hover
+                // Cancel any pending preview
+                if (this.previewDebounceTimer) {
+                    clearTimeout(this.previewDebounceTimer);
+                }
+                
+                this.previewDebounceTimer = setTimeout(() => {
+                    if (this.hoverPosition && this.hoverPosition.nx === nx && this.hoverPosition.ny === ny) {
+                        this.renderTransformPreviewAtPosition(nx, ny);
+                    }
+                }, 500);
+            }
+
+            cancelPreviewRender() {
+                // Cancel any pending preview render
+                if (this.previewDebounceTimer) {
+                    clearTimeout(this.previewDebounceTimer);
+                    this.previewDebounceTimer = null;
+                }
+            }
+
+            renderTransformPreviewAtPosition(nx, ny) {
+                if (!this.previewGl || !this.previewProgram || this.isGeneratingPreview) return;
+
+                this.isGeneratingPreview = true;
+                
+                const gl = this.previewGl;
+                const program = this.previewProgram;
+                const basis = this.stack.getLastSampledPoint().state;
+                const layer = this.previewLayer;
+
+                gl.viewport(0, 0, 220, 220);
+                gl.useProgram(program);
+
+                const setUniform = (name, setter, ...values) => {
+                    const loc = gl.getUniformLocation(program, name);
+                    if (loc !== null) setter.call(gl, loc, ...values);
+                };
+
+                const scaleX = (layer.max1 - layer.min1) / 2;
+                const scaleY = (layer.max2 - layer.min2) / 2;
+                
+                // Calculate the center point in data coordinates based on position
+                const centerX = layer.min1 + nx * (layer.max1 - layer.min1);
+                const centerY = layer.min2 + (1 - ny) * (layer.max2 - layer.min2);
+
+                setUniform('u_resolution', gl.uniform2f, 220, 220);
+                setUniform('u_tileOffset', gl.uniform2f, 0, 0);
+                setUniform('u_tileSize', gl.uniform2f, 220, 220);
+                setUniform('u_l1', gl.uniform1f, basis.l1);
+                setUniform('u_l2', gl.uniform1f, basis.l2);
+                setUniform('u_m1', gl.uniform1f, basis.m1);
+                setUniform('u_m2', gl.uniform1f, basis.m2);
+                setUniform('u_g', gl.uniform1f, this.baseParams.g);
+                setUniform('u_dt', gl.uniform1f, this.baseParams.dt);
+                setUniform('u_maxIter', gl.uniform1i, this.baseParams.maxIter);
+                setUniform('u_threshold', gl.uniform1f, this.baseParams.threshold);
+                setUniform('u_perturbFixedAB', gl.uniform4f, 0.00001, 0.00001, 0.00001, 0.00001);
+                setUniform('u_perturbFixedCD', gl.uniform4f, 0.00001, 0.00001, 0.00001, 0.00001);
+                setUniform('u_perturbCenterAB', gl.uniform4f, 0, 0, 0, 0);
+                setUniform('u_perturbCenterCD', gl.uniform4f, 0, 0, 0, 0);
+                setUniform('u_perturbStdAB', gl.uniform4f, 0.00001, 0.00001, 0.00001, 0.00001);
+                setUniform('u_perturbStdCD', gl.uniform4f, 0.00001, 0.00001, 0.00001, 0.00001);
+                setUniform('u_perturbMode', gl.uniform1i, 1);
+                setUniform('u_integrator', gl.uniform1i, this.baseParams.integrator === 'verlet' ? 1 : 0);
+                setUniform('u_seed', gl.uniform1f, 0);
+                setUniform('u_colorMapping', gl.uniform1i, this.colorMapping);
+                setUniform('u_cyclePeriod', gl.uniform1f, this.cyclePeriod);
+                setUniform('u_hueMapping', gl.uniform1i, this.hueMapping);
+
+                const noiseTex = this.updateNoiseTexture(gl, 220, 220);
+                setUniform('u_noiseTexture', gl.uniform1i, 0);
+
+                setUniform('u_layerMode', gl.uniform1i, 1);
+                setUniform('u_fixedState', gl.uniform4f, basis.theta1, basis.theta2, basis.omega1, basis.omega2);
+                setUniform('u_scaleX', gl.uniform1f, scaleX);
+                setUniform('u_scaleY', gl.uniform1f, scaleY);
+                setUniform('u_centerX', gl.uniform1f, centerX);
+                setUniform('u_centerY', gl.uniform1f, centerY);
+                setUniform('u_mappedDims', gl.uniform2i, DIM_TO_INDEX[layer.dim1], DIM_TO_INDEX[layer.dim2]);
+                setUniform('u_deltaMode', gl.uniform1i, layer.deltaMode ? 1 : 0);
+
+                gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+                gl.deleteTexture(noiseTex);
+                this.isGeneratingPreview = false;
+            }
+
+
+            setupEventListeners() {
+                // Canvas interactions
+                this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+                this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+                this.canvas.addEventListener('mouseleave', () => this.handleMouseLeave());
+                this.canvas.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    this.zoomOut();
+                });
+
+                // Form inputs - Basis Point
+                const bindBasis = (id, key) => {
+                    document.getElementById(id).addEventListener('change', (e) => {
+                        const value = parseFloat(e.target.value);
+                        const basis = this.stack.getLastSampledPoint().state;
+                        basis[key] = value;
+                        this.generateMap();
+                        this.renderPreview();
+                    });
+                };
+
+                bindBasis('basisTheta1', 'theta1');
+                bindBasis('basisTheta2', 'theta2');
+                bindBasis('basisOmega1', 'omega1');
+                bindBasis('basisOmega2', 'omega2');
+                bindBasis('basisL1', 'l1');
+                bindBasis('basisL2', 'l2');
+                bindBasis('basisM1', 'm1');
+                bindBasis('basisM2', 'm2');
+
+                // Main Map Transformation Controls
+                document.getElementById('mainXDimSelect').addEventListener('change', (e) => {
+                    this.stack.getLastLayer().dim1 = e.target.value;
+                    this.updateDefaultRanges('main');
+                    this.generateMap();
+                });
+
+                document.getElementById('mainYDimSelect').addEventListener('change', (e) => {
+                    this.stack.getLastLayer().dim2 = e.target.value;
+                    this.updateDefaultRanges('main');
+                    this.generateMap();
+                });
+
+                const bindMainLayerRange = (id, key) => {
+                    document.getElementById(id).addEventListener('change', (e) => {
+                        this.stack.getLastLayer()[key] = parseFloat(e.target.value);
+                        this.generateMap();
+                    });
+                };
+
+                bindMainLayerRange('mainXMin', 'min1');
+                bindMainLayerRange('mainXMax', 'max1');
+                bindMainLayerRange('mainYMin', 'min2');
+                bindMainLayerRange('mainYMax', 'max2');
+
+                document.getElementById('mainDeltaMode').addEventListener('change', (e) => {
+                    this.stack.getLastLayer().deltaMode = e.target.checked;
+                    this.generateMap();
+                });
+
+                // Preview Map Transformation Controls
+                document.getElementById('previewXDimSelect').addEventListener('change', (e) => {
+                    this.previewLayer.dim1 = e.target.value;
+                    this.updateDefaultRanges('preview');
+                    this.triggerPreviewRender();
+                });
+
+                document.getElementById('previewYDimSelect').addEventListener('change', (e) => {
+                    this.previewLayer.dim2 = e.target.value;
+                    this.updateDefaultRanges('preview');
+                    this.triggerPreviewRender();
+                });
+
+                const bindPreviewLayerRange = (id, key) => {
+                    document.getElementById(id).addEventListener('change', (e) => {
+                        this.previewLayer[key] = parseFloat(e.target.value);
+                        this.triggerPreviewRender();
+                    });
+                };
+
+                bindPreviewLayerRange('previewXMin', 'min1');
+                bindPreviewLayerRange('previewXMax', 'max1');
+                bindPreviewLayerRange('previewYMin', 'min2');
+                bindPreviewLayerRange('previewYMax', 'max2');
+
+                document.getElementById('previewDeltaMode').addEventListener('change', (e) => {
+                    this.previewLayer.deltaMode = e.target.checked;
+                    this.triggerPreviewRender();
+                });
+
+                // Physics
+                document.getElementById('integratorSelect').addEventListener('change', (e) => {
+                    this.baseParams.integrator = e.target.value;
+                    this.generateMap();
+                });
+
+                document.getElementById('dtInput').addEventListener('change', (e) => {
+                    this.baseParams.dt = parseFloat(e.target.value);
+                    this.generateMap();
+                });
+
+                document.getElementById('maxIterInput').addEventListener('change', (e) => {
+                    this.baseParams.maxIter = parseInt(e.target.value);
+                    this.generateMap();
+                });
+
+                document.getElementById('thresholdInput').addEventListener('change', (e) => {
+                    this.baseParams.threshold = parseFloat(e.target.value);
+                    this.generateMap();
+                });
+
+                document.getElementById('gInput').addEventListener('change', (e) => {
+                    this.baseParams.g = parseFloat(e.target.value);
+                    this.generateMap();
+                });
+
+                // Rendering - apply instantly on change
+                document.getElementById('resolutionSelect').addEventListener('change', () => {
+                    this.generateMap();
+                    this.renderPreview();
+                });
+
+                document.getElementById('renderModeSelect').addEventListener('change', () => {
+                    this.generateMap();
+                    this.renderPreview();
+                });
+
+                document.getElementById('colorMappingSelect').addEventListener('change', (e) => {
+                    this.colorMapping = parseInt(e.target.value);
+                    this.generateMap();
+                    this.renderPreview();
+                });
+
+                document.getElementById('paletteSelect').addEventListener('change', (e) => {
+                    this.hueMapping = parseInt(e.target.value);
+                    this.generateMap();
+                    this.renderPreview();
+                });
+
+                // Buttons
+                document.getElementById('zoomOutBtn').addEventListener('click', () => this.zoomOut());
+                document.getElementById('downloadBtn').addEventListener('click', () => this.downloadImage());
+            }
+
+            updateDefaultRanges(target = 'main') {
+                if (target === 'main') {
+                    const layer = this.stack.getLastLayer();
+                    const defaults1 = DIM_DEFAULTS[layer.dim1];
+                    const defaults2 = DIM_DEFAULTS[layer.dim2];
+                    
+                    if (defaults1) {
+                        layer.min1 = defaults1.min;
+                        layer.max1 = defaults1.max;
+                        document.getElementById('mainXMin').value = defaults1.min;
+                        document.getElementById('mainXMax').value = defaults1.max;
+                    }
+                    if (defaults2) {
+                        layer.min2 = defaults2.min;
+                        layer.max2 = defaults2.max;
+                        document.getElementById('mainYMin').value = defaults2.min;
+                        document.getElementById('mainYMax').value = defaults2.max;
+                    }
+                } else {
+                    const defaults1 = DIM_DEFAULTS[this.previewLayer.dim1];
+                    const defaults2 = DIM_DEFAULTS[this.previewLayer.dim2];
+                    
+                    if (defaults1) {
+                        this.previewLayer.min1 = defaults1.min;
+                        this.previewLayer.max1 = defaults1.max;
+                        document.getElementById('previewXMin').value = defaults1.min;
+                        document.getElementById('previewXMax').value = defaults1.max;
+                    }
+                    if (defaults2) {
+                        this.previewLayer.min2 = defaults2.min;
+                        this.previewLayer.max2 = defaults2.max;
+                        document.getElementById('previewYMin').value = defaults2.min;
+                        document.getElementById('previewYMax').value = defaults2.max;
+                    }
+                }
+            }
+
+            updateUIFromState() {
+                const basis = this.stack.getLastSampledPoint().state;
+                const mainLayer = this.stack.getLastLayer();
+
+                document.getElementById('basisTheta1').value = basis.theta1;
+                document.getElementById('basisTheta2').value = basis.theta2;
+                document.getElementById('basisOmega1').value = basis.omega1;
+                document.getElementById('basisOmega2').value = basis.omega2;
+                document.getElementById('basisL1').value = basis.l1;
+                document.getElementById('basisL2').value = basis.l2;
+                document.getElementById('basisM1').value = basis.m1;
+                document.getElementById('basisM2').value = basis.m2;
+
+                // Main map controls
+                document.getElementById('mainXDimSelect').value = mainLayer.dim1;
+                document.getElementById('mainYDimSelect').value = mainLayer.dim2;
+                document.getElementById('mainXMin').value = mainLayer.min1;
+                document.getElementById('mainXMax').value = mainLayer.max1;
+                document.getElementById('mainYMin').value = mainLayer.min2;
+                document.getElementById('mainYMax').value = mainLayer.max2;
+                document.getElementById('mainDeltaMode').checked = mainLayer.deltaMode;
+
+                // Preview map controls
+                document.getElementById('previewXDimSelect').value = this.previewLayer.dim1;
+                document.getElementById('previewYDimSelect').value = this.previewLayer.dim2;
+                document.getElementById('previewXMin').value = this.previewLayer.min1;
+                document.getElementById('previewXMax').value = this.previewLayer.max1;
+                document.getElementById('previewYMin').value = this.previewLayer.min2;
+                document.getElementById('previewYMax').value = this.previewLayer.max2;
+                document.getElementById('previewDeltaMode').checked = this.previewLayer.deltaMode;
+
+                document.getElementById('dtInput').value = this.baseParams.dt;
+                document.getElementById('maxIterInput').value = this.baseParams.maxIter;
+                document.getElementById('thresholdInput').value = this.baseParams.threshold;
+                document.getElementById('gInput').value = this.baseParams.g;
+                document.getElementById('integratorSelect').value = this.baseParams.integrator;
+            }
+
+            getMapCoordinates(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * (this.canvas.width / rect.width);
+                const y = (e.clientY - rect.top) * (this.canvas.height / rect.height);
+                const nx = Math.max(0, Math.min(1, x / this.canvas.width));
+                const ny = Math.max(0, Math.min(1, y / this.canvas.height));
+                return { nx, ny };
+            }
+
+            handleMouseMove(e) {
+                const { nx, ny } = this.getMapCoordinates(e);
+                this.hoverPosition = { nx, ny };
+
+                if (this.zoomState.isDragging) {
+                    this.zoomState.dragCurrent = { x: e.clientX, y: e.clientY };
+                    this.updateZoomOverlay();
+                    return;
+                }
+
+                const state = this.stack.computeState(nx, 1 - ny);
+                this.updateHoverInfo(state);
+                this.updatePendulumPreview(state);
+                // Debounced preview render - only after 500ms hover
+                this.scheduleHoverPreview(nx, ny);
+            }
+
+            handleMouseDown(e) {
+                if (e.button !== 0) return;
+                this.zoomState.isDragging = true;
+                this.zoomState.dragStart = { x: e.clientX, y: e.clientY };
+                this.zoomState.dragCurrent = { x: e.clientX, y: e.clientY };
+                this.createZoomOverlay();
+            }
+
+            handleMouseUp(e) {
+                if (!this.zoomState.isDragging) return;
+
+                this.zoomState.dragCurrent = { x: e.clientX, y: e.clientY };
+
+                const dx = this.zoomState.dragCurrent.x - this.zoomState.dragStart.x;
+                const dy = this.zoomState.dragCurrent.y - this.zoomState.dragStart.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance > 10) {
+                    this.applyZoom();
+                } else {
+                    // Click (not drag) - apply preview to main
+                    this.applyPreviewToMain();
+                }
+
+                this.zoomState.isDragging = false;
+                this.removeZoomOverlay();
+            }
+
+            handleMouseLeave() {
+                this.stopHoverSimulation();
+                this.cancelPreviewRender();
+                document.getElementById('hoverInfoDisplay').classList.remove('visible');
+                
+                if (this.zoomState.isDragging) {
+                    this.zoomState.isDragging = false;
+                    this.removeZoomOverlay();
+                }
+            }
+
+            createZoomOverlay() {
+                this.removeZoomOverlay();
+                const overlay = document.createElement('div');
+                overlay.id = 'zoomOverlay';
+                overlay.className = 'zoom-overlay';
+                document.body.appendChild(overlay);
+            }
+
+            updateZoomOverlay() {
+                const overlay = document.getElementById('zoomOverlay');
+                if (!overlay || !this.zoomState.dragStart || !this.zoomState.dragCurrent) return;
+
+                const x1 = Math.min(this.zoomState.dragStart.x, this.zoomState.dragCurrent.x);
+                const y1 = Math.min(this.zoomState.dragStart.y, this.zoomState.dragCurrent.y);
+                const x2 = Math.max(this.zoomState.dragStart.x, this.zoomState.dragCurrent.x);
+                const y2 = Math.max(this.zoomState.dragStart.y, this.zoomState.dragCurrent.y);
+
+                overlay.style.display = 'block';
+                overlay.style.left = x1 + 'px';
+                overlay.style.top = y1 + 'px';
+                overlay.style.width = (x2 - x1) + 'px';
+                overlay.style.height = (y2 - y1) + 'px';
+            }
+
+            removeZoomOverlay() {
+                const overlay = document.getElementById('zoomOverlay');
+                if (overlay) overlay.remove();
+            }
+
+            applyZoom() {
+                const canvasRect = this.canvas.getBoundingClientRect();
+                const layer = this.stack.getLastLayer();
+
+                const x1 = Math.min(this.zoomState.dragStart.x, this.zoomState.dragCurrent.x);
+                const x2 = Math.max(this.zoomState.dragStart.x, this.zoomState.dragCurrent.x);
+                const y1 = Math.min(this.zoomState.dragStart.y, this.zoomState.dragCurrent.y);
+                const y2 = Math.max(this.zoomState.dragStart.y, this.zoomState.dragCurrent.y);
+
+                const nx1 = (x1 - canvasRect.left) / canvasRect.width;
+                const nx2 = (x2 - canvasRect.left) / canvasRect.width;
+                const ny1 = (y1 - canvasRect.top) / canvasRect.height;
+                const ny2 = (y2 - canvasRect.top) / canvasRect.height;
+
+                this.zoomHistory.push({
+                    min1: layer.min1, max1: layer.max1,
+                    min2: layer.min2, max2: layer.max2
+                });
+
+                const dataX1 = layer.min1 + nx1 * (layer.max1 - layer.min1);
+                const dataX2 = layer.min1 + nx2 * (layer.max1 - layer.min1);
+                const dataY1 = layer.min2 + ny1 * (layer.max2 - layer.min2);
+                const dataY2 = layer.min2 + ny2 * (layer.max2 - layer.min2);
+
+                layer.min1 = Math.min(dataX1, dataX2);
+                layer.max1 = Math.max(dataX1, dataX2);
+                layer.min2 = Math.min(dataY1, dataY2);
+                layer.max2 = Math.max(dataY1, dataY2);
+
+                this.updateUIFromState();
+                this.generateMap();
+            }
+
+            applyPreviewToMain() {
+                // Copy preview layer settings to main layer
+                const mainLayer = this.stack.getLastLayer();
+                mainLayer.dim1 = this.previewLayer.dim1;
+                mainLayer.dim2 = this.previewLayer.dim2;
+                mainLayer.min1 = this.previewLayer.min1;
+                mainLayer.max1 = this.previewLayer.max1;
+                mainLayer.min2 = this.previewLayer.min2;
+                mainLayer.max2 = this.previewLayer.max2;
+                mainLayer.deltaMode = this.previewLayer.deltaMode;
+                
+                // Reset preview layer to velocity defaults
+                this.previewLayer = {
+                    dim1: 'omega1',
+                    dim2: 'omega2',
+                    min1: -10,
+                    max1: 10,
+                    min2: -10,
+                    max2: 10,
+                    deltaMode: false
+                };
+                
+                // Update UI to reflect changes
+                this.updateUIFromState();
+                
+                // Regenerate main map
+                this.generateMap();
+                
+                // Update preview to show the reset velocity mapping
+                this.renderPreview();
+            }
+
+            resetPreviewToDefaults() {
+                // Reset preview layer to velocity defaults
+                this.previewLayer = {
+                    dim1: 'omega1',
+                    dim2: 'omega2',
+                    min1: -10,
+                    max1: 10,
+                    min2: -10,
+                    max2: 10,
+                    deltaMode: false
+                };
+                this.updateUIFromState();
+                this.renderPreview();
+            }
+
+            zoomOut() {
+                const layer = this.stack.getLastLayer();
+
+                if (this.zoomHistory.length > 0) {
+                    const prev = this.zoomHistory.pop();
+                    layer.min1 = prev.min1;
+                    layer.max1 = prev.max1;
+                    layer.min2 = prev.min2;
+                    layer.max2 = prev.max2;
+                } else {
+                    const defaults1 = DIM_DEFAULTS[layer.dim1];
+                    const defaults2 = DIM_DEFAULTS[layer.dim2];
+                    layer.min1 = defaults1.min;
+                    layer.max1 = defaults1.max;
+                    layer.min2 = defaults2.min;
+                    layer.max2 = defaults2.max;
+                }
+
+                this.updateUIFromState();
+                this.generateMap();
+            }
+
+            updateHoverInfo(state) {
+                const display = document.getElementById('hoverInfoDisplay');
+                display.innerHTML = `
+                    θ₁=${state.theta1.toFixed(2)} θ₂=${state.theta2.toFixed(2)} 
+                    ω₁=${state.omega1.toFixed(2)} ω₂=${state.omega2.toFixed(2)}
+                `;
+                display.classList.add('visible');
+            }
+
+            updatePendulumPreview(state) {
+                // Store debounced position
+                this.hoverDebouncedPosition = { ...state };
+
+                // Clear existing timer
+                if (this.hoverDebounceTimer) {
+                    clearTimeout(this.hoverDebounceTimer);
+                }
+
+                // Stop current animation
+                this.stopHoverSimulation();
+
+                // Render static preview
+                this.renderStaticPendulum(state);
+
+                // Debounce: wait 500ms before starting animation
+                this.hoverDebounceTimer = setTimeout(() => {
+                    if (this.hoverDebouncedPosition) {
+                        this.startHoverSimulation({ ...this.hoverDebouncedPosition });
+                    }
+                }, 500);
+            }
+
+            renderStaticPendulum(state) {
+                const ctx = this.pendulumPreviewCanvas.getContext('2d');
+                const w = this.pendulumPreviewCanvas.width;
+                const h = this.pendulumPreviewCanvas.height;
+
+                ctx.fillStyle = '#0a0a0a';
+                ctx.fillRect(0, 0, w, h);
+
+                const maxReach = state.l1 + state.l2;
+                const scale = (Math.min(w, h) * 0.35) / maxReach;
+                const cx = w / 2;
+                const cy = h * 0.2;
+
+                const x1 = cx + scale * state.l1 * Math.sin(state.theta1);
+                const y1 = cy + scale * state.l1 * Math.cos(state.theta1);
+                const x2 = x1 + scale * state.l2 * Math.sin(state.theta2);
+                const y2 = y1 + scale * state.l2 * Math.cos(state.theta2);
+
+                ctx.strokeStyle = 'rgba(100, 200, 255, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.lineTo(x1, y1);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+
+                const r1 = Math.max(4, Math.sqrt(state.m1) * 8);
+                const r2 = Math.max(4, Math.sqrt(state.m2) * 8);
+
+                ctx.fillStyle = 'rgba(100, 200, 255, 0.9)';
+                ctx.beginPath();
+                ctx.arc(x1, y1, r1, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(150, 220, 255, 0.9)';
+                ctx.beginPath();
+                ctx.arc(x2, y2, r2, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = 'rgba(200, 200, 200, 0.8)';
+                ctx.beginPath();
+                ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            startHoverSimulation(initialState) {
+                // Use CPUPendulumSimulation from the included module
+                const perturbedState = {
+                    theta1: initialState.theta1 + 0.00001,
+                    theta2: initialState.theta2 + 0.00001,
+                    omega1: initialState.omega1 + 0.00001,
+                    omega2: initialState.omega2 + 0.00001
+                };
+
+                this.hoverCPUSim = new CPUPendulumSimulation(this.pendulumPreviewCanvas, {
+                    g: this.baseParams.g,
+                    dt: this.baseParams.dt,
+                    l1: initialState.l1,
+                    l2: initialState.l2,
+                    m1: initialState.m1,
+                    m2: initialState.m2,
+                    threshold: this.baseParams.threshold,
+                    integrator: this.baseParams.integrator,
+                    initialState1: initialState,
+                    initialState2: perturbedState
+                });
+
+                this.hoverCPUSim.render();
+
+                const animate = () => {
+                    if (!this.hoverCPUSim) return;
+                    
+                    this.hoverCPUSim.step(this.pendulumSimSpeed);
+                    this.hoverCPUSim.render();
+                    
+                    this.hoverAnimationId = requestAnimationFrame(animate);
+                };
+
+                animate();
+            }
+
+            stopHoverSimulation() {
+                if (this.hoverDebounceTimer) {
+                    clearTimeout(this.hoverDebounceTimer);
+                    this.hoverDebounceTimer = null;
+                }
+
+                if (this.hoverAnimationId) {
+                    cancelAnimationFrame(this.hoverAnimationId);
+                    this.hoverAnimationId = null;
+                }
+
+                if (this.hoverCPUSim) {
+                    this.hoverCPUSim.destroy();
+                    this.hoverCPUSim = null;
+                }
+            }
+
+            downloadImage() {
+                const link = document.createElement('a');
+                const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+                const mainLayer = this.stack.getLastLayer();
+                link.download = `chaos-map-${mainLayer.dim1}-${mainLayer.dim2}-${timestamp}.png`;
+                link.href = this.canvas.toDataURL('image/png');
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        // Initialize when DOM is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            window.app = new PortholeApp();
+        });
+    </script>
+</body>
+</html>

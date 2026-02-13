@@ -498,6 +498,14 @@ ChaosMapRenderer.prototype.renderTile = function(offsetX, offsetY, width, height
     // Delta mode: add to basis state instead of replacing
     setUniform('u_deltaMode', gl.uniform1i, shaderParams.deltaMode ? 1 : 0);
     
+    // Ensure vertex buffer is bound and attribute is enabled before drawing
+    if (this.tilePositionBuffer) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.tilePositionBuffer);
+    }
+    const positionLocation = gl.getAttribLocation(program, 'a_position');
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+    
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 };
 
@@ -596,6 +604,14 @@ ChaosMapRenderer.prototype.renderTileToImageData = async function(offsetX, offse
     
     // Delta mode
     setUniform('u_deltaMode', gl.uniform1i, shaderParams.deltaMode ? 1 : 0);
+    
+    // Ensure vertex buffer is bound and attribute is enabled before drawing
+    if (this.tilePositionBuffer) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.tilePositionBuffer);
+    }
+    const positionLocation = gl.getAttribLocation(program, 'a_position');
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
     
     // Draw the tile
     gl.drawArrays(gl.TRIANGLES, 0, 6);

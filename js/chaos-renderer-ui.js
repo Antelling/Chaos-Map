@@ -251,6 +251,18 @@ ChaosMapRenderer.prototype.startPinPlacement = function() {
     this.layerCreationState.isPlacingPin = true;
     this.layerCreationState.active = true;
     
+    // Sync state from UI controls
+    const xDimSelect = document.getElementById('xDimSelect');
+    const yDimSelect = document.getElementById('yDimSelect');
+    const deltaModeCheckbox = document.getElementById('deltaModeCheckbox');
+    
+    if (xDimSelect) this.layerCreationState.xDim = xDimSelect.value;
+    if (yDimSelect) this.layerCreationState.yDim = yDimSelect.value;
+    if (deltaModeCheckbox) this.layerCreationState.deltaMode = deltaModeCheckbox.checked;
+    
+    // Update ranges from inputs
+    this.updateLayerCreationState();
+    
     // Show preview panel
     const previewPanel = document.getElementById('previewPanel');
     if (previewPanel) previewPanel.style.display = 'block';
@@ -265,6 +277,9 @@ ChaosMapRenderer.prototype.startPinPlacement = function() {
     }
     
     this.canvas.style.cursor = 'crosshair';
+    
+    // Initial render at center so preview isn't blank
+    this.schedulePreviewRender(0.5, 0.5);
 };
 
 ChaosMapRenderer.prototype.placePin = function(nx, ny) {
@@ -572,11 +587,6 @@ ChaosMapRenderer.prototype.computePerturbedState = function(baseState, normX, no
             l2: Math.max(0.1, baseState.l2 + pf.l2 * s),
             m1: Math.max(0.1, baseState.m1 + pf.m1 * s),
             m2: Math.max(0.1, baseState.m2 + pf.m2 * s)
-        };
-    }
-            l2: Math.max(0.1, baseState.l2 + pf.l2),
-            m1: Math.max(0.1, baseState.m1 + pf.m1),
-            m2: Math.max(0.1, baseState.m2 + pf.m2)
         };
     }
 };

@@ -232,8 +232,8 @@ class ChaosMapRenderer {
             -1,  1,  1, -1,   1,  1
         ]);
         
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        this.tilePositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.tilePositionBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
         
         const positionLocation = gl.getAttribLocation(this.tileProgram, 'a_position');
@@ -324,8 +324,8 @@ class ChaosMapRenderer {
             -1,  1,  1, -1,   1,  1
         ]);
         
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        this.previewPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.previewPositionBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
         
         const positionLocation = gl.getAttribLocation(this.previewProgram, 'a_position');

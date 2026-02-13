@@ -46,7 +46,9 @@ ChaosMapRenderer.prototype.schedulePreviewRender = function(nx, ny) {
 
 ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     if (!this.previewGl || !this.previewProgram) return;
-    if (!this.layerCreationState.active && !this.layerCreationState.isPlacingPin) return;
+    // Render if we're in layer creation mode or placing a pin
+    const state = this.layerCreationState;
+    if (!state.active && !state.isPlacingPin && !state.pinPosition) return;
     
     const gl = this.previewGl;
     const program = this.previewProgram;
@@ -56,7 +58,6 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     gl.viewport(0, 0, width, height);
     gl.useProgram(program);
     
-    const state = this.layerCreationState;
     const xDim = state.xDim;
     const yDim = state.yDim;
     
@@ -65,8 +66,10 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     const basisState = this.stack.computeState(nx, 1 - ny);
     
     // Determine mode and fixed state based on which dimensions are being mapped
+    // fixedState always contains the FULL basis state - the shader uses it as base values
+    // Index 0=theta1, 1=theta2, 2=omega1, 3=omega2
     let mode = 0;
-    let fixedState = [0, 0, 0, 0];
+    let fixedState = [basisState.theta1, basisState.theta2, basisState.omega1, basisState.omega2];
     let outL1 = basisState.l1;
     let outL2 = basisState.l2;
     let outM1 = basisState.m1;
@@ -83,31 +86,17 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     const yIsL = yDim === 'l1' || yDim === 'l2';
     const yIsM = yDim === 'm1' || yDim === 'm2';
     
-    // Determine mode
+    // Determine mode - this affects the shader's logic but fixedState always has full basis
     if (xIsTheta || yIsTheta) {
         mode = 0; // Position mode
-        fixedState[0] = (xDim === 'theta1') ? basisState.theta1 : (yDim === 'theta1') ? basisState.theta1 : 0;
-        fixedState[1] = (xDim === 'theta2') ? basisState.theta2 : (yDim === 'theta2') ? basisState.theta2 : 0;
     } else if (xIsOmega || yIsOmega) {
         mode = 1; // Velocity mode
-        fixedState[0] = basisState.theta1;
-        fixedState[1] = basisState.theta2;
-        fixedState[2] = (xDim === 'omega1') ? basisState.omega1 : (yDim === 'omega1') ? basisState.omega1 : basisState.omega1;
-        fixedState[3] = (xDim === 'omega2') ? basisState.omega2 : (yDim === 'omega2') ? basisState.omega2 : basisState.omega2;
     } else if (xIsL || yIsL) {
         mode = 2; // Length mode
-        fixedState[0] = basisState.theta1;
-        fixedState[1] = basisState.theta2;
-        fixedState[2] = basisState.omega1;
-        fixedState[3] = basisState.omega2;
         if (xDim === 'l1' || yDim === 'l1') outL1 = basisState.l1;
         if (xDim === 'l2' || yDim === 'l2') outL2 = basisState.l2;
     } else if (xIsM || yIsM) {
         mode = 3; // Mass mode
-        fixedState[0] = basisState.theta1;
-        fixedState[1] = basisState.theta2;
-        fixedState[2] = basisState.omega1;
-        fixedState[3] = basisState.omega2;
         if (xDim === 'm1' || yDim === 'm1') outM1 = basisState.m1;
         if (xDim === 'm2' || yDim === 'm2') outM2 = basisState.m2;
     }
@@ -186,6 +175,14 @@ ChaosMapRenderer.prototype.renderPreview = function(nx, ny) {
     
     // Delta mode: add to basis state instead of replacing
     setUniform('u_deltaMode', gl.uniform1i, state.deltaMode ? 1 : 0);
+    
+    // Ensure vertex buffer is bound and attribute is enabled before drawing
+    if (this.previewPositionBuffer) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.previewPositionBuffer);
+    }
+    const positionLocation = gl.getAttribLocation(program, 'a_position');
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
     
     gl.drawArrays(gl.TRIANGLES, 0, 6);
     
@@ -276,8 +273,8 @@ ChaosMapRenderer.prototype.handleMapMouseMove = function(e) {
         return;
     }
     
-    // If in pin placement mode, trigger preview debounce
-    if (this.layerCreationState.isPlacingPin) {
+    // If in layer creation mode (placing pin or already placed), trigger preview debounce
+    if (this.layerCreationState.active) {
         this.schedulePreviewRender(nx, ny);
     }
     

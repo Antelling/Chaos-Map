@@ -735,9 +735,9 @@
 <body>
     <div class="main-container">
         <div class="sidebar">
-            <!-- Simulation Settings -->
+            <!-- Pendulum Controls -->
             <div class="panel">
-                <h3 class="panel-header"><span class="panel-toggle">▼</span>Simulation Settings</h3>
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Pendulum Controls</h3>
                 <div class="panel-content">
                 <div class="form-group">
                     <label>Integrator</label>
@@ -1314,8 +1314,9 @@
             
             // Compute output values: viewport [0,1] maps to [center - scale, center + scale]
             // which is equivalent to [min, max]
+            // Note: Flip Y so that top of canvas = maxY, bottom = minY (standard convention)
             float outX = u_centerX + (normalizedCoord.x * 2.0 - 1.0) * u_scaleX;
-            float outY = u_centerY + (normalizedCoord.y * 2.0 - 1.0) * u_scaleY;
+            float outY = u_centerY + ((1.0 - normalizedCoord.y) * 2.0 - 1.0) * u_scaleY;
             
             // Initialize from fixed state (basis) - for non-mapped dimensions
             s1.theta1 = u_fixedState.x;
