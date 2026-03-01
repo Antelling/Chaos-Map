@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lyapunov Loupe - GPU Chaos Explorer</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="main-container">
+    <div class="sidebar" id="sidebar">
+      <!-- System Selection -->
+      <div class="panel">
+        <h3 class="panel-header"><span class="panel-toggle">▼</span>System</h3>
+        <div class="panel-content">
+          <div class="form-group">
+            <label>System Type</label>
+            <select id="system-select">
+              <option value="double-pendulum">Double Pendulum</option>
+              <option value="elastic-pendulum">Elastic Pendulum</option>
+              <option value="henon-heiles">Hénon–Heiles</option>
+              <option value="duffing">Duffing Oscillator</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Integrator</label>
+            <select id="integrator-select">
+              <option value="rk4">RK4 (Runge-Kutta 4)</option>
+              <option value="verlet">Verlet (Symplectic)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Basis Point Editor -->
+      <div class="panel">
+        <h3 class="panel-header"><span class="panel-toggle">▼</span>Basis Point</h3>
+        <div class="panel-content" id="basis-point-content">
+          <!-- Dynamically populated based on system -->
+        </div>
+      </div>
+
+      <!-- Dimension Mapping -->
+      <div class="panel">
+        <h3 class="panel-header"><span class="panel-toggle">▼</span>Dimension Mapping</h3>
+        <div class="panel-content">
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.7rem;">
+              <input type="checkbox" id="delta-mode" style="width: auto;">
+              <span>Delta mode (Δ) - add to basis state</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label>X Axis →</label>
+            <select id="x-dim-select"></select>
+            <div class="range-inputs">
+              <input type="number" id="x-min" step="0.1">
+              <span>to</span>
+              <input type="number" id="x-max" step="0.1">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Y Axis →</label>
+            <select id="y-dim-select"></select>
+            <div class="range-inputs">
+              <input type="number" id="y-min" step="0.1">
+              <span>to</span>
+              <input type="number" id="y-max" step="0.1">
+            </div>
+          </div>
+        </div>
+      </div>
+
+        <!-- Simulation Parameters -->
+       <div class="panel">
+         <h3 class="panel-header"><span class="panel-toggle">▼</span>Simulation</h3>
+         <div class="panel-content">
+            <div class="form-group">
+              <label>Time Step (dt)</label>
+              <input type="number" id="dt-input" value="0.002" step="0.001" min="0.001">
+            </div>
+             <div class="form-group">
+                <label>Iterations Between Samples</label>
+                <input type="number" id="iter-between-input" value="5" step="1" min="0" max="1000">
+                <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+                  Evolution steps between FTLE samples
+                </div>
+              </div>
+
+            <div class="form-group">
+              <label>LE Threshold (for threshold view)</label>
+              <input type="number" id="threshold-input" value="300" step="10" min="1" max="10000">
+              <div class="input-hint">Threshold for frame-count visualization</div>
+            </div>
+
+            <div class="form-group">
+              <label>Num Perturbations (per pixel)</label>
+             <input type="number" id="num-pert-input" value="32" step="8" min="8" max="128">
+             <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+               Multiple random directions for averaging
+             </div>
+           </div>
+           <div class="form-group">
+             <label>Perturbation Scale</label>
+             <input type="number" id="pert-input" value="0.001" step="0.0001" min="0.0001" max="0.1">
+           </div>
+            <div class="form-group">
+              <label>Resolution</label>
+              <select id="resolution-select">
+                <option value="256">256</option>
+                <option value="512" selected>512</option>
+                <option value="1024">1024</option>
+                <option value="2048">2048</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Chunk Size</label>
+              <select id="chunk-size-select">
+                <option value="32">32 × 32</option>
+                <option value="64" selected>64 × 64</option>
+                <option value="128">128 × 128</option>
+                <option value="256">256 × 256</option>
+                <option value="512">512 × 512</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+      <!-- Value & Color Mapping -->
+      <div class="panel">
+        <h3 class="panel-header"><span class="panel-toggle">▼</span>Value & Color Mapping</h3>
+        <div class="panel-content">
+          <div class="form-group">
+            <label>Value Mapping</label>
+            <select id="value-mapping-select">
+              <option value="0">Linear</option>
+              <option value="1">Logarithmic</option>
+              <option value="2">Cyclical</option>
+            </select>
+          </div>
+          <div class="form-group" id="mapping-period-group" style="display: none;">
+            <label>Period</label>
+            <input type="number" id="mapping-period" value="1" step="0.1" min="0.1">
+            <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+              Wavelength for cyclical mapping
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Color Palette</label>
+            <select id="colormap-select">
+              <option value="0">Viridis</option>
+              <option value="1">Magma</option>
+              <option value="2">Plasma</option>
+              <option value="3">Inferno</option>
+              <option value="4">Turbo</option>
+              <option value="5">Jet</option>
+              <option value="6">Rainbow</option>
+              <option value="7">Hot</option>
+              <option value="8">Cool</option>
+              <option value="9">Spring</option>
+              <option value="10">Summer</option>
+              <option value="11">Autumn</option>
+              <option value="12">Winter</option>
+              <option value="13">Bone</option>
+              <option value="14">Copper</option>
+              <option value="15">Pink</option>
+              <option value="16">HSV</option>
+              <option value="17">Twilight</option>
+              <option value="18">Cubehelix</option>
+              <option value="19">Cividis</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Animation Controls -->
+      <div class="panel">
+        <h3 class="panel-header"><span class="panel-toggle">▼</span>Animation Controls</h3>
+        <div class="panel-content">
+          <!-- Playback Controls -->
+          <div class="animation-controls-row">
+            <button id="anim-prev-frame" class="btn btn-icon" title="Previous Frame">
+              <span class="icon">◀◀</span>
+            </button>
+            <button id="anim-play-pause" class="btn btn-icon btn-primary" title="Play/Pause">
+              <span class="icon" id="play-pause-icon">▶</span>
+            </button>
+            <button id="anim-next-frame" class="btn btn-icon" title="Next Frame">
+              <span class="icon">▶▶</span>
+            </button>
+          </div>
+
+          <div class="animation-frame-display" id="animation-frame-display">
+            Frame: <span id="frame-counter">0 / 0</span> | Stored: <span id="stored-frames-counter">0</span>
+          </div>
+
+          <!-- Generate Frame (only when paused) -->
+          <div class="form-group" id="generate-frame-group">
+            <button id="anim-generate-frame" class="btn btn-full">Generate Next Frame</button>
+          </div>
+
+          <!-- Animation Pause Duration -->
+          <div class="form-group">
+            <label>Pause Between Frames (ms)</label>
+            <input type="number" id="anim-pause-duration" value="1000" step="100" min="0" max="10000">
+          </div>
+
+          <!-- Save Frame Interval -->
+          <div class="form-group">
+            <label>Save Frame Every N Frames</label>
+            <input type="number" id="save-frame-interval" value="1" step="1" min="1" max="100">
+            <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+              Accumulation/threshold still calculated every frame
+            </div>
+          </div>
+
+          <!-- View Mode Toggle -->
+          <div class="form-group">
+            <label>View Mode</label>
+            <select id="view-mode-select">
+              <option value="instant">Instant FTLE</option>
+              <option value="accumulated">Accumulated Total</option>
+              <option value="threshold">Threshold View</option>
+              <option value="bob2-distance">Bob2 Distance</option>
+              <option value="position">Position Visualization</option>
+              <option value="divergence-time">Divergence Time</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="position-mode-group" style="display: none;">
+            <label>Position Mode</label>
+            <select id="position-mode-select">
+              <option value="0">Angle 1 (θ₁)</option>
+              <option value="1">Angle 2 (θ₂)</option>
+              <option value="2">Bob 1 X Position</option>
+              <option value="3">Bob 1 Y Position</option>
+              <option value="4">Bob 2 X Position</option>
+              <option value="5">Bob 2 Y Position</option>
+              <option value="6">Angular Velocity 1 (ω₁)</option>
+              <option value="7">Angular Velocity 2 (ω₂)</option>
+              <option value="8">Total Energy</option>
+            </select>
+          </div>
+
+          <div id="divergence-controls-group" style="display: none;">
+            <div class="form-group">
+              <label>Divergence Threshold</label>
+              <input type="number" id="divergence-threshold-input" value="0.5" step="0.1" min="0.01" max="10.0">
+              <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+                Distance threshold for divergence detection
+              </div>
+            </div>
+            <div class="form-group">
+              <label>N Samples (Perturbed Trajectories)</label>
+              <input type="number" id="divergence-samples-input" value="8" step="1" min="1" max="32">
+              <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+                Number of perturbed trajectories to track
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Initial Perturbation Scale</label>
+              <input type="number" id="divergence-perturbation-scale-input" value="0.001" step="0.0001" min="0.00001" max="0.1">
+              <div style="font-size: 0.65rem; color: #888; margin-top: 0.2rem;">
+                Magnitude of initial random perturbation
+              </div>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button id="assemble-animation" class="btn">Generate Video</button>
+            <button id="clear-frames" class="btn">Clear All</button>
+          </div>
+          <button id="download" class="btn">Download Current Image</button>
+        </div>
+      </div>
+
+      <!-- Frame Thumbnails -->
+      <div class="panel">
+        <h3 class="panel-header"><span class="panel-toggle">▼</span>Stored Frames</h3>
+        <div class="panel-content">
+          <div class="thumbnail-strip-container" id="thumbnail-strip-container">
+            <div class="thumbnail-strip" id="thumbnail-strip">
+              <!-- Thumbnails will be added here dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+       <div class="panel collapsed" id="console-panel">
+         <h3 class="panel-header"><span class="panel-toggle">▼</span>Console Output</h3>
+         <div class="panel-content">
+           <div class="console-output" id="console-output"></div>
+           <div class="console-controls">
+             <button id="console-clear" class="btn btn-small">Clear</button>
+             <button id="console-copy" class="btn btn-small">Copy All</button>
+           </div>
+         </div>
+       </div>
+
+       <!-- Hover Info -->
+       <div class="panel">
+         <h3 class="panel-header"><span class="panel-toggle">▼</span>Hover Info</h3>
+         <div class="panel-content">
+           <div class="pendulum-preview-container">
+             <div class="pendulum-preview">
+               <div class="pendulum-label">Initial</div>
+               <canvas id="pendulum-initial-canvas" width="150" height="150"></canvas>
+             </div>
+             <div class="pendulum-preview">
+               <div class="pendulum-label">Current</div>
+               <canvas id="pendulum-current-canvas" width="150" height="150"></canvas>
+             </div>
+           </div>
+           <div id="hover-data" class="hover-display">Hover over the map to see details</div>
+         </div>
+       </div>
+
+        <!-- Debug Tool -->
+        <div class="panel" id="debug-panel" style="display: none;">
+          <h3 class="panel-header"><span class="panel-toggle">▼</span>Debug Tool</h3>
+          <div class="panel-content">
+            <div class="form-group">
+              <label>Perturbation Degree (δ)</label>
+              <input type="number" id="debug-perturbation" value="0.001" step="0.0001" min="0.0001">
+            </div>
+            <div class="form-group">
+              <label>Total Samples</label>
+              <input type="number" id="debug-total-samples" value="100" step="10" min="10" max="1000">
+            </div>
+            <div class="form-group">
+              <label>Iterations per Sample</label>
+              <input type="number" id="debug-iter-per-sample" value="5" step="1" min="1" max="50">
+            </div>
+            <div class="form-group">
+              <label>Iterations Between Samples</label>
+              <input type="number" id="debug-iter-between" value="10" step="1" min="1" max="100">
+            </div>
+            <div class="form-group">
+              <label>Integration Algorithm</label>
+              <select id="debug-integrator">
+                <option value="rk4">RK4</option>
+                <option value="verlet">Verlet</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Timestep (dt)</label>
+              <input type="number" id="debug-dt" value="0.002" step="0.001" min="0.001">
+            </div>
+            <button id="debug-run" class="btn btn-primary">Run Debug Simulation</button>
+            <button id="debug-toggle" class="btn">Toggle Debug View</button>
+          </div>
+        </div>
+
+        <!-- Back to Index Link -->
+        <div class="sidebar-footer">
+          <a href="/" class="back-link">← Back to Index</a>
+        </div>
+     </div>
+
+    <div class="main-content">
+      <div class="map-wrapper">
+        <div class="map-container" id="map-container">
+          <canvas id="chaos-canvas"></canvas>
+          <div id="debug-pin" class="debug-pin" style="display: none;">
+            <div class="pin-head"></div>
+            <div class="pin-body"></div>
+          </div>
+        </div>
+
+        <!-- Debug Visualization Panel -->
+        <div id="debug-visualization" class="debug-panel" style="display: none;">
+          <div class="debug-row">
+            <div class="debug-section">
+              <h4>Pendulum Preview</h4>
+              <canvas id="pendulum-preview" width="200" height="200"></canvas>
+              <div id="pendulum-state" class="debug-info"></div>
+            </div>
+            <div class="debug-section">
+              <h4>Orbit Visualization</h4>
+              <canvas id="orbit-plot" width="200" height="200"></canvas>
+            </div>
+          </div>
+          <div class="debug-row">
+            <div class="debug-section full-width">
+              <h4>FTLE Matrix (16 perturbations)</h4>
+              <div id="ftle-matrix-container">
+                <canvas id="ftle-matrix" width="400" height="400"></canvas>
+                <div id="matrix-indicator" class="matrix-indicator"></div>
+              </div>
+              <div id="ftle-legend" class="ftle-legend"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { ChaosRenderer } from './js/main.js';
+    import { initMobileConsole } from './js/mobile-console.js';
+
+    // Initialize mobile console first to capture all logs
+    initMobileConsole();
+
+    const canvas = document.getElementById('chaos-canvas');
+    const container = document.getElementById('map-container');
+
+    const renderer = new ChaosRenderer(canvas, container);
+    renderer.initialize().then(() => {
+      console.log('Lyapunov Loupe initialized');
+    }).catch(err => {
+      console.error('Failed to initialize:', err);
+    });
+  </script>
+</body>
+</html>

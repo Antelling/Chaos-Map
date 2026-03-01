@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Double Pendulum Chaos Map</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #eaeaea;
+            overflow: hidden;
+        }
+
+        .main-container {
+            display: flex;
+            height: 100vh;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .sidebar {
+            width: 360px;
+            min-width: 360px;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+
+        .main-content {
+            flex: 1;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #generateBtn {
+            margin-left: auto;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+        }
+
+        .mode-indicator {
+            padding: 0.5rem 1rem;
+            background: rgba(100, 200, 255, 0.2);
+            border-radius: 8px;
+            border: 1px solid rgba(100, 200, 255, 0.3);
+            font-size: 0.9rem;
+            color: #8cf;
+        }
+
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .map-container {
+            position: relative;
+            width: 100%;
+            max-width: min(calc(100vh - 180px), calc(100vw - 400px));
+            aspect-ratio: 1;
+            background: #0a0a0a;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #chaosMapCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        .panel {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            flex-shrink: 0;
+        }
+
+        .panel h3 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: #a0a0a0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .panel-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            transition: color 0.2s ease;
+        }
+        
+        .panel-header:hover {
+            color: #ccc;
+        }
+        
+        .panel-toggle {
+            font-size: 0.7rem;
+            color: #666;
+            transition: transform 0.2s ease, color 0.2s ease;
+            display: inline-block;
+            width: 1rem;
+            text-align: center;
+        }
+        
+        .panel-header:hover .panel-toggle {
+            color: #888;
+        }
+        
+        .panel.collapsed .panel-toggle {
+            transform: rotate(-90deg);
+        }
+        
+        .panel-content {
+            overflow: hidden;
+            transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease;
+            max-height: 2000px;
+            opacity: 1;
+        }
+        
+        .panel.collapsed .panel-content {
+            max-height: 0;
+            opacity: 0;
+            margin-top: 0;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+            margin-bottom: 0.6rem;
+        }
+
+        .form-group label {
+            font-size: 0.75rem;
+            color: #aaa;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .form-group input[type="number"],
+        .form-group select {
+            padding: 0.35rem 0.5rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.8rem;
+            width: 100%;
+        }
+
+        .form-group input[type="range"] {
+            width: 100%;
+            accent-color: #6af;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: rgba(100, 170, 255, 0.5);
+        }
+
+        .param-slider-wrapper {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .param-slider-wrapper input[type="range"] {
+            flex: 1;
+        }
+
+        .param-slider-wrapper input[type="number"] {
+            width: 60px;
+        }
+
+        .btn {
+            padding: 0.5rem 0.75rem;
+            background: rgba(100, 150, 255, 0.2);
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 6px;
+            color: #8af;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn:hover {
+            background: rgba(100, 150, 255, 0.3);
+            color: #aff;
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: rgba(100, 200, 100, 0.2);
+            border-color: rgba(100, 200, 100, 0.3);
+            color: #8f8;
+        }
+
+        .btn-primary:hover {
+            background: rgba(100, 200, 100, 0.3);
+        }
+
+        .btn-danger {
+            background: rgba(255, 100, 100, 0.2);
+            border-color: rgba(255, 100, 100, 0.3);
+            color: #f88;
+        }
+
+        .btn-danger:hover {
+            background: rgba(255, 100, 100, 0.3);
+        }
+
+        /* Stack Styles */
+        .stack-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .stack-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0.6rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-size: 0.75rem;
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .stack-item:hover {
+            border-color: rgba(100, 150, 255, 0.3);
+        }
+
+        .stack-item.selected {
+            background: rgba(100, 150, 255, 0.2);
+            border-color: rgba(100, 150, 255, 0.5);
+        }
+
+        .stack-item.layer-item {
+            border-left: 3px solid rgba(100, 200, 255, 0.5);
+        }
+
+        .stack-item.sampled-item {
+            border-left: 3px solid rgba(255, 200, 100, 0.5);
+            background: rgba(255, 200, 100, 0.05);
+        }
+
+        .stack-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.1rem;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .stack-name {
+            font-weight: 500;
+            color: #ccc;
+        }
+
+        .stack-params {
+            font-size: 0.7rem;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .delete-btn {
+            background: rgba(255, 100, 100, 0.2);
+            border: none;
+            color: #f88;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .delete-btn:hover {
+            background: rgba(255, 100, 100, 0.3);
+        }
+
+        .delete-btn.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .add-layer-row {
+            display: flex;
+            gap: 0.4rem;
+            margin-top: 0.5rem;
+        }
+
+        .add-layer-row select {
+            flex: 1;
+            padding: 0.4rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.75rem;
+        }
+
+        .layer-editor {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-top: 0.5rem;
+        }
+
+        .editor-title {
+            font-size: 0.8rem;
+            color: #6af;
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .range-inputs {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .range-inputs input[type="number"] {
+            flex: 1;
+            padding: 0.35rem 0.4rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.8rem;
+            width: 60px;
+        }
+
+        .range-inputs span {
+            color: #888;
+            font-size: 0.7rem;
+        }
+
+        #layerPreviewCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            background: #0a0a0a;
+        }
+
+        /* Preview Section */
+        .preview-box {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .preview-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.4rem 0.6rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .preview-title {
+            font-size: 0.75rem;
+            color: #aaa;
+        }
+
+        .preview-canvas-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 1;
+            background: #0a0a0a;
+        }
+
+        .preview-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        /* Simulation Container */
+        .simulation-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .simulation-container::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .simulation-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+        }
+
+        /* Simulation Pane */
+        .sim-pane {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .sim-pane.hover-pane {
+            border-color: rgba(100, 200, 255, 0.3);
+            background: rgba(100, 200, 255, 0.05);
+            min-height: 200px;
+        }
+
+        .sim-pane.pinned-pane {
+            border-color: rgba(100, 255, 150, 0.4);
+            background: rgba(100, 255, 150, 0.05);
+            animation: pinPulse 0.3s ease;
+        }
+
+        @keyframes pinPulse {
+            0% { transform: scale(0.98); border-color: rgba(100, 255, 150, 0.8); }
+            100% { transform: scale(1); border-color: rgba(100, 255, 150, 0.4); }
+        }
+
+        .sim-pane-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.35rem 0.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            min-height: 28px;
+        }
+
+        .sim-pane-title {
+            font-size: 0.7rem;
+            color: #aaa;
+            font-family: monospace;
+        }
+
+        .sim-pane.hover-pane .sim-pane-title {
+            color: #8af;
+        }
+
+        .sim-pane.pinned-pane .sim-pane-title {
+            color: #8f8;
+        }
+
+        .sim-pane-delete {
+            width: 18px;
+            height: 18px;
+            border: none;
+            background: rgba(255, 100, 100, 0.2);
+            color: #f88;
+            border-radius: 3px;
+            font-size: 0.8rem;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.7;
+            transition: all 0.15s ease;
+        }
+
+        .sim-pane-delete:hover {
+            opacity: 1;
+            background: rgba(255, 100, 100, 0.4);
+            color: #fcc;
+        }
+
+        .sim-pane-status {
+            font-size: 0.65rem;
+            color: #666;
+            margin-left: auto;
+            margin-right: 0.5rem;
+        }
+
+        .preview-info {
+            padding: 0.4rem 0.5rem;
+            background: rgba(0, 0, 0, 0.8);
+            font-size: 0.7rem;
+            color: #888;
+            font-family: monospace;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .simulation-controls {
+            display: flex;
+            gap: 0.4rem;
+            padding: 0.4rem;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .sim-btn {
+            flex: 1;
+            padding: 0.35rem;
+            background: rgba(100, 150, 255, 0.15);
+            border: 1px solid rgba(100, 150, 255, 0.25);
+            border-radius: 4px;
+            color: #8af;
+            font-size: 0.7rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .sim-btn:hover {
+            background: rgba(100, 150, 255, 0.25);
+        }
+
+        .progress-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #6af, #a8f);
+            width: 0%;
+            transition: width 0.1s ease;
+        }
+
+        .loading {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.8);
+            font-size: 0.9rem;
+            color: #888;
+            z-index: 100;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #6af;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .legend {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .legend-gradient {
+            width: 100px;
+            height: 12px;
+            background: linear-gradient(90deg, 
+                hsl(0, 80%, 50%), 
+                hsl(60, 80%, 50%), 
+                hsl(120, 80%, 50%), 
+                hsl(180, 80%, 50%), 
+                hsl(240, 80%, 50%), 
+                hsl(300, 80%, 50%)
+            );
+            border-radius: 2px;
+        }
+
+        .stats {
+            font-size: 0.7rem;
+            color: #666;
+            margin-top: 0.5rem;
+        }
+
+        .info-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.9);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 0.6rem 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            z-index: 100;
+        }
+
+        .hover-info {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            color: #aaa;
+        }
+
+        .hover-info span {
+            font-family: monospace;
+            color: #fc8;
+        }
+
+        .instructions {
+            color: #666;
+        }
+        
+        .zoom-controls {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+        
+        .zoom-btn {
+            padding: 0.3rem 0.6rem;
+            background: rgba(100, 150, 255, 0.15);
+            border: 1px solid rgba(100, 150, 255, 0.3);
+            border-radius: 4px;
+            color: #8af;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .zoom-btn:hover {
+            background: rgba(100, 150, 255, 0.25);
+        }
+
+        @media (max-width: 900px) {
+            body {
+                overflow-y: auto;
+            }
+            
+            .main-container {
+                flex-direction: column;
+                height: auto;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                max-height: none;
+                order: 2;
+            }
+
+            .main-content {
+                order: 1;
+                height: auto;
+                min-height: 400px;
+            }
+
+            .map-container {
+                max-width: 100%;
+            }
+            
+            .info-footer {
+                position: relative;
+                flex-direction: column;
+                gap: 0.5rem;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="sidebar">
+            <!-- Pendulum Controls -->
+            <div class="panel">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Pendulum Controls</h3>
+                <div class="panel-content">
+                <div class="form-group">
+                    <label>Integrator</label>
+                    <select id="integratorSelect">
+                        <option value="rk4">RK4 (Runge-Kutta 4)</option>
+                        <option value="verlet" selected>Verlet (Symplectic)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Time Step (dt)</label>
+                    <input type="number" id="dtInput" value="0.002" step="0.001" min="0.001">
+                </div>
+                <div class="form-group">
+                    <label>Max Iterations</label>
+                    <input type="number" id="maxIterInput" value="20000" step="100" min="100">
+                </div>
+                <div class="form-group">
+                    <label>Divergence Threshold</label>
+                    <input type="number" id="thresholdInput" value="0.05" step="0.01" min="0.001">
+                </div>
+                <div class="form-group">
+                    <label>Perturbation Mode</label>
+                    <select id="perturbModeSelect">
+                        <option value="fixed">Fixed (Offsets)</option>
+                        <option value="random" selected>Random (Gaussian)</option>
+                    </select>
+                </div>
+                <div id="perturbConfigPanel" style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <!-- Dynamic perturbation inputs will be inserted here -->
+                </div>
+                </div>
+            </div>
+
+            <!-- Color Mapping -->
+            <div class="panel">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Color Mapping</h3>
+                <div class="panel-content">
+                <div class="form-group">
+                    <label>Tone Mapping</label>
+                    <select id="colorMappingSelect">
+                        <option value="0" selected>Linear</option>
+                        <option value="1">Logarithmic</option>
+                        <option value="2">Square Root</option>
+                        <option value="3">Exponential</option>
+                        <option value="4">S-Curve</option>
+                        <option value="5">Gamma 0.4</option>
+                        <option value="6">Hyper Log</option>
+                        <option value="7">Hard Cap 97%</option>
+                        <option value="8">Cyclical</option>
+                    </select>
+                </div>
+                <div class="form-group" id="cyclePeriodGroup" style="display: none;">
+                    <label>Cycle Period</label>
+                    <input type="number" id="cyclePeriodInput" value="500" step="50" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Color Palette</label>
+                    <select id="hueMappingSelect">
+                        <option value="0" selected>Rainbow</option>
+                        <option value="1">Heatmap</option>
+                        <option value="2">Cool</option>
+                        <option value="3">Hot</option>
+                        <option value="4">Grayscale</option>
+                        <option value="5">Viridis</option>
+                        <option value="6">Plasma</option>
+                        <option value="7">Inverted Rainbow</option>
+                    </select>
+                </div>
+                <div class="legend">
+                    <span id="legendSlow">Slow</span>
+                    <div class="legend-gradient" id="legendGradient"></div>
+                    <span id="legendFast">Fast</span>
+                </div>
+                </div>
+            </div>
+
+            <!-- Pendulum Preview -->
+            <div class="panel">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Pendulum Simulation</h3>
+                <div class="panel-content">
+                <div class="preview-box">
+                    <div class="preview-header">
+                        <span class="preview-title" id="pendulumPreviewTitle">Hover map to preview</span>
+                    </div>
+                    <div class="simulation-controls" style="padding: 0.5rem; background: rgba(255,255,255,0.05);">
+                        <button class="sim-btn" id="pinSimBtn" style="background: rgba(100, 200, 100, 0.2); border-color: rgba(100, 200, 100, 0.3); color: #8f8;">📍 Pin Sim
+                        </button>
+                        <button class="sim-btn" id="clearPinsBtn">❌ Clear All</button>
+                    </div>
+                    <div style="padding: 0.4rem; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <label style="font-size: 0.7rem; color: #888; display: flex; justify-content: space-between;">
+                            <span>Sim Speed</span>
+                            <span id="speedValue" style="color: #6af; font-family: monospace;">5x</span>
+                        </label>
+                        <input type="range" id="simSpeedSlider" min="1" max="20" value="5" step="1" style="width: 100%; accent-color: #6af;">
+                    </div>
+                    <div id="simulationContainer" class="simulation-container">
+                        <!-- Hover preview pane (always present) -->
+                        <div class="sim-pane hover-pane" id="hoverPane">
+                            <div class="sim-pane-header">
+                                <span class="sim-pane-title" id="hoverPaneTitle">Preview</span>
+                            </div>
+                            <div class="preview-canvas-container">
+                                <canvas id="pendulumPreviewCanvas" class="preview-canvas" width="256" height="256"></canvas>
+                            </div>
+                        </div>
+                        <!-- Permanent simulations will be added here -->
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <!-- Energy Visualization -->
+            <div class="panel collapsed">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Energy View</h3>
+                <div class="panel-content">
+                    <div class="preview-box">
+                        <div class="preview-header">
+                            <span class="preview-title">PE vs KE (main pendulum)</span>
+                        </div>
+                        <div class="preview-canvas-container">
+                            <canvas id="energyCanvas" width="256" height="256"></canvas>
+                        </div>
+                    </div>
+                    <div class="preview-box" style="margin-top: 0.5rem;">
+                        <div class="preview-header">
+                            <span class="preview-title">Total Energy vs Time</span>
+                        </div>
+                        <div class="preview-canvas-container">
+                            <canvas id="energyTimeCanvas" width="256" height="256"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Transformation Stack -->
+            <div class="panel">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Transformation Stack</h3>
+                <div class="panel-content">
+                <div class="stack-list" id="stackList">
+                    <!-- Stack items inserted here -->
+                </div>
+                
+                <!-- Layer Editor (for editing selected points/layers) -->
+                <div class="layer-editor" id="layerEditor" style="display: none;">
+                    <div class="editor-title" id="editorTitle"></div>
+                    <div id="editorParams"></div>
+                </div>
+                
+                <!-- Layer Creation Workflow -->
+                <div id="layerCreationPanel" style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <div style="font-size: 0.75rem; color: #888; margin-bottom: 0.5rem;">Add New Layer:</div>
+                    
+                    <!-- Delta Mode Toggle -->
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.7rem;">
+                            <input type="checkbox" id="deltaModeCheckbox" style="width: auto;">
+                            <span>Delta mode (Δ) - add to basis state</span>
+                        </label>
+                        <div style="font-size: 0.65rem; color: #666; margin-left: 1.1rem; margin-top: 0.1rem;">
+                            When checked, output values are added to the sampled state instead of replacing it
+                        </div>
+                    </div>
+                    
+                    <!-- X Dimension -->
+                    <div class="form-group" style="margin-bottom: 0.4rem;">
+                        <label style="font-size: 0.7rem;">X →</label>
+                        <select id="xDimSelect" style="width: 100%; margin-bottom: 0.3rem;">
+                            <option value="theta1">θ₁ (Angle 1)</option>
+                            <option value="theta2">θ₂ (Angle 2)</option>
+                            <option value="omega1">ω₁ (Velocity 1)</option>
+                            <option value="omega2">ω₂ (Velocity 2)</option>
+                            <option value="l1">L₁ (Length 1)</option>
+                            <option value="l2">L₂ (Length 2)</option>
+                            <option value="m1">m₁ (Mass 1)</option>
+                            <option value="m2">m₂ (Mass 2)</option>
+                        </select>
+                        <div class="range-inputs">
+                            <input type="number" id="xMin" value="-3.14" step="0.1" style="padding: 0.3rem; font-size: 0.75rem;">
+                            <span style="font-size: 0.7rem;">to</span>
+                            <input type="number" id="xMax" value="3.14" step="0.1" style="padding: 0.3rem; font-size: 0.75rem;">
+                        </div>
+                    </div>
+                    
+                    <!-- Y Dimension -->
+                    <div class="form-group" style="margin-bottom: 0.5rem;">
+                        <label style="font-size: 0.7rem;">Y →</label>
+                        <select id="yDimSelect" style="width: 100%; margin-bottom: 0.3rem;">
+                            <option value="theta1">θ₁ (Angle 1)</option>
+                            <option value="theta2" selected>θ₂ (Angle 2)</option>
+                            <option value="omega1">ω₁ (Velocity 1)</option>
+                            <option value="omega2">ω₂ (Velocity 2)</option>
+                            <option value="l1">L₁ (Length 1)</option>
+                            <option value="l2">L₂ (Length 2)</option>
+                            <option value="m1">m₁ (Mass 1)</option>
+                            <option value="m2">m₂ (Mass 2)</option>
+                        </select>
+                        <div class="range-inputs">
+                            <input type="number" id="yMin" value="-3.14" step="0.1" style="padding: 0.3rem; font-size: 0.75rem;">
+                            <span style="font-size: 0.7rem;">to</span>
+                            <input type="number" id="yMax" value="3.14" step="0.1" style="padding: 0.3rem; font-size: 0.75rem;">
+                        </div>
+                    </div>
+                    
+                    <!-- Place Pin Button -->
+                    <button id="placePinBtn" class="btn" style="width: 100%; font-size: 0.8rem; padding: 0.5rem; margin-bottom: 0.5rem;">
+                        📍 Place Pin
+                    </button>
+                    <div id="pinStatus" style="display: none; font-size: 0.7rem; color: #8af; text-align: center; margin-bottom: 0.5rem;">
+                        📍 Pin at (<span id="pinPosX">0.50</span>, <span id="pinPosY">0.50</span>)
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <!-- Layer Preview (shows preview at pin location) -->
+            <div class="panel" id="previewPanel" style="display: none;">
+                <h3 class="panel-header"><span class="panel-toggle">▼</span>Layer Preview</h3>
+                <div class="panel-content">
+                <div class="preview-box">
+                    <div class="preview-canvas-container" style="width: 256px; height: 256px; margin: 0 auto;">
+                        <canvas id="layerPreviewCanvas" width="256" height="256"></canvas>
+                    </div>
+                    <div class="preview-info" id="previewInfo" style="justify-content: center;">
+                        Place pin to preview
+                    </div>
+                </div>
+                <button id="saveLayerBtn" class="btn btn-primary" style="width: 100%; margin-top: 0.75rem; font-size: 0.85rem; padding: 0.6rem;">
+                    Save Layer
+                </button>
+                <button id="cancelLayerBtn" class="btn btn-danger" style="width: 100%; margin-top: 0.3rem; font-size: 0.75rem; padding: 0.4rem;">
+                    Cancel
+                </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="top-bar">
+                <select id="resolutionSelect" style="padding: 0.35rem 0.5rem; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; color: #fff; font-size: 0.8rem;">
+                    <option value="256">256 x 256 (Fast)</option>
+                    <option value="512">512 x 512</option>
+                    <option value="1024" selected>1024 x 1024</option>
+                    <option value="2048">2048 x 2048</option>
+                    <option value="4096">4096 x 4096 (Slow)</option>
+                </select>
+                <select id="renderModeSelect" style="padding: 0.35rem 0.5rem; background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; color: #fff; font-size: 0.8rem;">
+                    <option value="gpu">GPU (WebGL - Fast)</option>
+                    <option value="cpu">CPU (64-bit Precision)</option>
+                </select>
+                <div class="zoom-controls">
+                    <button id="zoomOutBtn" class="zoom-btn" title="Right-click map to zoom out">− Zoom Out</button>
+                </div>
+                <button id="downloadBtn" class="btn">💾 Download Image</button>
+                <button id="generateBtn" class="btn">Redraw</button>
+            </div>
+            <div class="map-wrapper">
+                <div class="map-container" id="mapContainer">
+                    <canvas id="chaosMapCanvas"></canvas>
+
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="loading" id="loadingIndicator" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>Computing...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Footer -->
+    <div class="info-footer">
+        <div class="hover-info" id="hoverInfo">
+            Hover over map to see pendulum state
+        </div>
+        <div class="instructions">
+            Drag to zoom • Right-click to zoom out • Select layer type, then click to place
+        </div>
+    </div>
+
+    <!-- WebGL Chaos Shader -->
+    <script id="chaos-vertex-shader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
+        }
+    </script>
+
+
+
+
+    <script id="chaos-fragment-shader" type="x-shader/x-fragment">
+        precision highp float;
+        
+        uniform vec2 u_resolution;
+        uniform vec2 u_tileOffset;
+        uniform vec2 u_tileSize;
+        uniform float u_l1;
+        uniform float u_l2;
+        uniform float u_m1;
+        uniform float u_m2;
+        uniform float u_g;
+        uniform float u_dt;
+        uniform int u_maxIter;
+        uniform float u_threshold;
+        uniform int u_perturbMode;
+        uniform vec4 u_perturbFixedAB;  // fixed offsets for theta1, theta2, omega1, omega2
+        uniform vec4 u_perturbFixedCD;  // fixed offsets for l1, l2, m1, m2
+        uniform vec4 u_perturbCenterAB; // random centers for theta1, theta2, omega1, omega2
+        uniform vec4 u_perturbCenterCD; // random centers for l1, l2, m1, m2
+        uniform vec4 u_perturbStdAB;    // random std devs for theta1, theta2, omega1, omega2
+        uniform vec4 u_perturbStdCD;    // random std devs for l1, l2, m1, m2
+        uniform float u_seed;
+        uniform sampler2D u_noiseTexture;
+        uniform int u_colorMapping;
+        uniform float u_cyclePeriod;
+        uniform int u_hueMapping;
+        
+        // Layer-based uniforms
+        uniform int u_layerMode; // 0=position, 1=velocity, 2=length, 3=mass
+        uniform int u_integrator; // 0=rk4, 1=verlet
+        uniform vec4 u_fixedState; // theta1, theta2, omega1, omega2
+        uniform float u_scaleX;
+        uniform float u_scaleY;
+        uniform float u_centerX;
+        uniform float u_centerY;
+        uniform ivec2 u_mappedDims; // Which dimensions are being mapped
+        uniform bool u_deltaMode; // When true, add output to basis state instead of replacing
+        
+        const float PI = 3.14159265359;
+        const int MAX_ITERATIONS = 100000;  // Upper bound - actual limit controlled by u_maxIter uniform
+        
+        struct State {
+            float theta1;
+            float theta2;
+            float omega1;
+            float omega2;
+        };
+        
+        // Sample random values from CPU-generated noise texture
+        // We need 4 uniform random values per pixel for Box-Muller
+        // The noise texture matches the tile size, so we use fragCoord (local to tile)
+        vec4 sampleNoise(vec2 fragCoord) {
+            vec2 texCoord = fragCoord / u_tileSize;
+            return texture2D(u_noiseTexture, texCoord);
+        }
+        
+        void computeAccelerations(State s, float l1, float l2, float m1, float m2, out float alpha1, out float alpha2) {
+            float M = m1 + m2;
+            float delta = s.theta1 - s.theta2;
+            float sinDelta = sin(delta);
+            float cosDelta = cos(delta);
+            
+            float alpha_denom = m1 + m2 * sinDelta * sinDelta;
+            
+            float num1 = -m2 * l1 * s.omega1 * s.omega1 * sinDelta * cosDelta
+                       - m2 * l2 * s.omega2 * s.omega2 * sinDelta
+                       - M * u_g * sin(s.theta1)
+                       + m2 * u_g * sin(s.theta2) * cosDelta;
+            
+            float num2 = M * l1 * s.omega1 * s.omega1 * sinDelta
+                       + m2 * l2 * s.omega2 * s.omega2 * sinDelta * cosDelta
+                       + M * u_g * sin(s.theta1) * cosDelta
+                       - M * u_g * sin(s.theta2);
+            
+            alpha1 = num1 / (l1 * alpha_denom);
+            alpha2 = num2 / (l2 * alpha_denom);
+        }
+        
+        State stepPhysicsRK4(State s, float l1, float l2, float m1, float m2) {
+            State k1, k2, k3, k4, temp;
+            float dt = u_dt;
+            
+            computeAccelerations(s, l1, l2, m1, m2, k1.omega1, k1.omega2);
+            k1.theta1 = s.omega1;
+            k1.theta2 = s.omega2;
+            
+            temp.theta1 = s.theta1 + 0.5 * dt * k1.theta1;
+            temp.theta2 = s.theta2 + 0.5 * dt * k1.theta2;
+            temp.omega1 = s.omega1 + 0.5 * dt * k1.omega1;
+            temp.omega2 = s.omega2 + 0.5 * dt * k1.omega2;
+            computeAccelerations(temp, l1, l2, m1, m2, k2.omega1, k2.omega2);
+            k2.theta1 = temp.omega1;
+            k2.theta2 = temp.omega2;
+            
+            temp.theta1 = s.theta1 + 0.5 * dt * k2.theta1;
+            temp.theta2 = s.theta2 + 0.5 * dt * k2.theta2;
+            temp.omega1 = s.omega1 + 0.5 * dt * k2.omega1;
+            temp.omega2 = s.omega2 + 0.5 * dt * k2.omega2;
+            computeAccelerations(temp, l1, l2, m1, m2, k3.omega1, k3.omega2);
+            k3.theta1 = temp.omega1;
+            k3.theta2 = temp.omega2;
+            
+            temp.theta1 = s.theta1 + dt * k3.theta1;
+            temp.theta2 = s.theta2 + dt * k3.theta2;
+            temp.omega1 = s.omega1 + dt * k3.omega1;
+            temp.omega2 = s.omega2 + dt * k3.omega2;
+            computeAccelerations(temp, l1, l2, m1, m2, k4.omega1, k4.omega2);
+            k4.theta1 = temp.omega1;
+            k4.theta2 = temp.omega2;
+            
+            State next;
+            next.theta1 = s.theta1 + dt * (k1.theta1 + 2.0 * k2.theta1 + 2.0 * k3.theta1 + k4.theta1) / 6.0;
+            next.theta2 = s.theta2 + dt * (k1.theta2 + 2.0 * k2.theta2 + 2.0 * k3.theta2 + k4.theta2) / 6.0;
+            next.omega1 = s.omega1 + dt * (k1.omega1 + 2.0 * k2.omega1 + 2.0 * k3.omega1 + k4.omega1) / 6.0;
+            next.omega2 = s.omega2 + dt * (k1.omega2 + 2.0 * k2.omega2 + 2.0 * k3.omega2 + k4.omega2) / 6.0;
+            
+            return next;
+        }
+        
+        // Velocity Verlet integrator - symplectic, preserves energy
+        State stepPhysicsVerlet(State s, float l1, float l2, float m1, float m2) {
+            float dt = u_dt;
+            float halfDt = 0.5 * dt;
+            
+            // Compute current accelerations
+            float alpha1, alpha2;
+            computeAccelerations(s, l1, l2, m1, m2, alpha1, alpha2);
+            
+            // Half-step velocity update
+            float omega1_half = s.omega1 + halfDt * alpha1;
+            float omega2_half = s.omega2 + halfDt * alpha2;
+            
+            // Full position update
+            State next;
+            next.theta1 = s.theta1 + dt * omega1_half;
+            next.theta2 = s.theta2 + dt * omega2_half;
+            next.omega1 = omega1_half;
+            next.omega2 = omega2_half;
+            
+            // Compute new accelerations at updated positions
+            computeAccelerations(next, l1, l2, m1, m2, alpha1, alpha2);
+            
+            // Final half-step velocity update
+            next.omega1 += halfDt * alpha1;
+            next.omega2 += halfDt * alpha2;
+            
+            return next;
+        }
+        
+        State stepPhysics(State s, float l1, float l2, float m1, float m2) {
+            if (u_integrator == 1) {
+                return stepPhysicsVerlet(s, l1, l2, m1, m2);
+            } else {
+                return stepPhysicsRK4(s, l1, l2, m1, m2);
+            }
+        }
+        
+        float circularDiff(float a, float b) {
+            float d = a - b;
+            if (d > PI) d -= 2.0 * PI;
+            if (d < -PI) d += 2.0 * PI;
+            return d;
+        }
+        
+        float measureDivergence(State s1, State s2) {
+            float dTheta = circularDiff(s1.theta1, s2.theta1);
+            float dTheta2 = circularDiff(s1.theta2, s2.theta2);
+            float dOmega = s1.omega1 - s2.omega1;
+            float dOmega2 = s1.omega2 - s2.omega2;
+            return sqrt(dTheta * dTheta + dTheta2 * dTheta2 + dOmega * dOmega + dOmega2 * dOmega2);
+        }
+        
+        vec3 hsv2rgb(float h, float s, float v) {
+            float c = v * s;
+            float x = c * (1.0 - abs(mod(h * 6.0, 2.0) - 1.0));
+            float m = v - c;
+            
+            vec3 rgb;
+            if (h < 1.0/6.0) rgb = vec3(c, x, 0.0);
+            else if (h < 2.0/6.0) rgb = vec3(x, c, 0.0);
+            else if (h < 3.0/6.0) rgb = vec3(0.0, c, x);
+            else if (h < 4.0/6.0) rgb = vec3(0.0, x, c);
+            else if (h < 5.0/6.0) rgb = vec3(x, 0.0, c);
+            else rgb = vec3(c, 0.0, x);
+            
+            return rgb + m;
+        }
+        
+        vec3 mapHueToRGB(float t, int palette) {
+            if (palette == 0) {
+                float hue = (1.0 - t) * 0.85;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            else if (palette == 1) {
+                if (t < 0.33) {
+                    float u = t / 0.33;
+                    return vec3(u, 0.0, 0.0);
+                } else if (t < 0.66) {
+                    float u = (t - 0.33) / 0.33;
+                    return vec3(1.0, u, 0.0);
+                } else {
+                    float u = (t - 0.66) / 0.34;
+                    return vec3(1.0, 1.0, u);
+                }
+            }
+            else if (palette == 2) {
+                float hue = 0.67 - t * 0.5;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            else if (palette == 3) {
+                if (t < 0.5) {
+                    float u = t / 0.5;
+                    return vec3(u, 0.0, 0.0);
+                } else {
+                    float u = (t - 0.5) / 0.5;
+                    return vec3(1.0, u, 0.0);
+                }
+            }
+            else if (palette == 4) {
+                return vec3(1.0 - t);
+            }
+            else if (palette == 5) {
+                vec3 a = vec3(0.5, 0.0, 0.5);
+                vec3 b = vec3(0.0, 0.5, 1.0);
+                vec3 c = vec3(0.0, 1.0, 0.5);
+                vec3 d = vec3(1.0, 1.0, 0.0);
+                
+                float u = 1.0 - t;
+                if (u < 0.33) {
+                    float x = u / 0.33;
+                    return mix(a, b, x);
+                } else if (u < 0.66) {
+                    float x = (u - 0.33) / 0.33;
+                    return mix(b, c, x);
+                } else {
+                    float x = (u - 0.66) / 0.34;
+                    return mix(c, d, x);
+                }
+            }
+            else if (palette == 6) {
+                vec3 a = vec3(0.0, 0.0, 0.0);
+                vec3 b = vec3(0.5, 0.0, 0.5);
+                vec3 c = vec3(1.0, 0.0, 0.5);
+                vec3 d = vec3(1.0, 1.0, 0.0);
+                
+                float u = 1.0 - t;
+                if (u < 0.33) {
+                    float x = u / 0.33;
+                    return mix(a, b, x);
+                } else if (u < 0.66) {
+                    float x = (u - 0.33) / 0.33;
+                    return mix(b, c, x);
+                } else {
+                    float x = (u - 0.66) / 0.34;
+                    return mix(c, d, x);
+                }
+            }
+            else if (palette == 7) {
+                float hue = t * 0.85;
+                return hsv2rgb(hue, 1.0, 1.0);
+            }
+            
+            float hue = (1.0 - t) * 0.85;
+            return hsv2rgb(hue, 1.0, 1.0);
+        }
+        
+        void main() {
+            vec2 fragCoord = vec2(gl_FragCoord.x, u_tileSize.y - gl_FragCoord.y);
+            vec2 pixelCoord = fragCoord + u_tileOffset;
+            vec2 normalizedCoord = pixelCoord / u_resolution;
+            
+            State s1, s2;
+            float localL1 = u_l1;
+            float localL2 = u_l2;
+            float localM1 = u_m1;
+            float localM2 = u_m2;
+            
+            // Map dimensions: 0=theta1, 1=theta2, 2=omega1, 3=omega2, 4=l1, 5=l2, 6=m1, 7=m2
+            int dim1 = u_mappedDims.x;
+            int dim2 = u_mappedDims.y;
+            
+            // Compute output values: viewport [0,1] maps to [center - scale, center + scale]
+            // which is equivalent to [min, max]
+            // Note: Flip Y so that top of canvas = maxY, bottom = minY (standard convention)
+            float outX = u_centerX + (normalizedCoord.x * 2.0 - 1.0) * u_scaleX;
+            float outY = u_centerY + ((1.0 - normalizedCoord.y) * 2.0 - 1.0) * u_scaleY;
+            
+            // Initialize from fixed state (basis) - for non-mapped dimensions
+            s1.theta1 = u_fixedState.x;
+            s1.theta2 = u_fixedState.y;
+            s1.omega1 = u_fixedState.z;
+            s1.omega2 = u_fixedState.w;
+            
+            // Apply output values based on which dimensions are mapped
+            // For angles, we use the output directly (already in radians)
+            // In delta mode, add to the basis state instead of replacing
+            if (dim1 == 0) s1.theta1 = u_deltaMode ? u_fixedState.x + outX : outX;
+            else if (dim1 == 1) s1.theta2 = u_deltaMode ? u_fixedState.y + outX : outX;
+            else if (dim1 == 2) s1.omega1 = u_deltaMode ? u_fixedState.z + outX : outX;
+            else if (dim1 == 3) s1.omega2 = u_deltaMode ? u_fixedState.w + outX : outX;
+            else if (dim1 == 4) localL1 = max(0.1, u_deltaMode ? u_l1 + outX : outX);
+            else if (dim1 == 5) localL2 = max(0.1, u_deltaMode ? u_l2 + outX : outX);
+            else if (dim1 == 6) localM1 = max(0.1, u_deltaMode ? u_m1 + outX : outX);
+            else if (dim1 == 7) localM2 = max(0.1, u_deltaMode ? u_m2 + outX : outX);
+            
+            if (dim2 == 0) s1.theta1 = u_deltaMode ? u_fixedState.x + outY : outY;
+            else if (dim2 == 1) s1.theta2 = u_deltaMode ? u_fixedState.y + outY : outY;
+            else if (dim2 == 2) s1.omega1 = u_deltaMode ? u_fixedState.z + outY : outY;
+            else if (dim2 == 3) s1.omega2 = u_deltaMode ? u_fixedState.w + outY : outY;
+            else if (dim2 == 4) localL1 = max(0.1, u_deltaMode ? u_l1 + outY : outY);
+            else if (dim2 == 5) localL2 = max(0.1, u_deltaMode ? u_l2 + outY : outY);
+            else if (dim2 == 6) localM1 = max(0.1, u_deltaMode ? u_m1 + outY : outY);
+            else if (dim2 == 7) localM2 = max(0.1, u_deltaMode ? u_m2 + outY : outY);
+            
+            s2 = s1;
+            
+            if (u_perturbMode == 1) {
+                // Random mode: Gaussian sampling with configurable centers and std devs
+                // Sample true random values from CPU-generated texture
+                // fragCoord is local to the tile (0 to tileSize), matching the noise texture
+                vec4 noise1 = sampleNoise(fragCoord);
+                vec4 noise2 = sampleNoise(fragCoord + vec2(0.5)); // Offset for more samples
+                
+                float u1 = noise1.r;
+                float u2 = noise1.g;
+                float u3 = noise1.b;
+                float u4 = noise1.a;
+                
+                // Box-Muller for 4 pairs of Gaussian random numbers
+                float r1 = sqrt(-2.0 * log(u1 + 0.0001));
+                float theta1 = 2.0 * PI * u2;
+                float r2 = sqrt(-2.0 * log(u3 + 0.0001));
+                float theta2 = 2.0 * PI * u4;
+                
+                float n1 = r1 * cos(theta1);  // for theta1
+                float n2 = r1 * sin(theta1);  // for theta2
+                float n3 = r2 * cos(theta2);  // for omega1
+                float n4 = r2 * sin(theta2);  // for omega2
+                
+                // Generate 4 more Gaussian samples using noise2
+                float u5 = noise2.r;
+                float u6 = noise2.g;
+                float u7 = noise2.b;
+                float u8 = noise2.a;
+                
+                float r3 = sqrt(-2.0 * log(u5 + 0.0001));
+                float theta3 = 2.0 * PI * u6;
+                float r4 = sqrt(-2.0 * log(u7 + 0.0001));
+                float theta4 = 2.0 * PI * u8;
+                
+                float n5 = r3 * cos(theta3);  // for l1
+                float n6 = r3 * sin(theta3);  // for l2
+                float n7 = r4 * cos(theta4);  // for m1
+                float n8 = r4 * sin(theta4);  // for m2
+                
+                // Apply perturbations: base_state + center + std_dev * normal_random
+                s2.theta1 += u_perturbCenterAB.x + n1 * u_perturbStdAB.x;
+                s2.theta2 += u_perturbCenterAB.y + n2 * u_perturbStdAB.y;
+                s2.omega1 += u_perturbCenterAB.z + n3 * u_perturbStdAB.z;
+                s2.omega2 += u_perturbCenterAB.w + n4 * u_perturbStdAB.w;
+                localL1 = max(0.1, localL1 + u_perturbCenterCD.x + n5 * u_perturbStdCD.x);
+                localL2 = max(0.1, localL2 + u_perturbCenterCD.y + n6 * u_perturbStdCD.y);
+                localM1 = max(0.1, localM1 + u_perturbCenterCD.z + n7 * u_perturbStdCD.z);
+                localM2 = max(0.1, localM2 + u_perturbCenterCD.w + n8 * u_perturbStdCD.w);
+            } else {
+                // Fixed mode: add direct offsets
+                s2.theta1 += u_perturbFixedAB.x;
+                s2.theta2 += u_perturbFixedAB.y;
+                s2.omega1 += u_perturbFixedAB.z;
+                s2.omega2 += u_perturbFixedAB.w;
+                localL1 = max(0.1, localL1 + u_perturbFixedCD.x);
+                localL2 = max(0.1, localL2 + u_perturbFixedCD.y);
+                localM1 = max(0.1, localM1 + u_perturbFixedCD.z);
+                localM2 = max(0.1, localM2 + u_perturbFixedCD.w);
+            }
+            
+            int divergenceIter = u_maxIter;
+            bool diverged = false;
+            
+            for (int i = 0; i < MAX_ITERATIONS; i++) {
+                if (i >= u_maxIter) break;
+                
+                s1 = stepPhysics(s1, localL1, localL2, localM1, localM2);
+                s2 = stepPhysics(s2, localL1, localL2, localM1, localM2);
+                
+                float dist = measureDivergence(s1, s2);
+                
+                if (dist > u_threshold && !diverged) {
+                    divergenceIter = i;
+                    diverged = true;
+                    break;
+                }
+            }
+            
+            vec3 color;
+            if (!diverged) {
+                color = vec3(1.0, 1.0, 1.0);
+            } else {
+                float iter = float(divergenceIter);
+                float maxIter = float(u_maxIter);
+                float t;
+                
+                if (u_colorMapping == 0) {
+                    t = iter / maxIter;
+                } else if (u_colorMapping == 1) {
+                    t = log(1.0 + iter) / log(1.0 + maxIter);
+                } else if (u_colorMapping == 2) {
+                    t = sqrt(iter / maxIter);
+                } else if (u_colorMapping == 3) {
+                    t = (exp(iter / maxIter) - 1.0) / (2.718281828 - 1.0);
+                } else if (u_colorMapping == 4) {
+                    float x = iter / maxIter;
+                    t = x * x * (3.0 - 2.0 * x);
+                } else if (u_colorMapping == 5) {
+                    t = pow(iter / maxIter, 0.4);
+                } else if (u_colorMapping == 6) {
+                    t = log(1.0 + log(1.0 + iter)) / log(1.0 + log(1.0 + maxIter));
+                } else if (u_colorMapping == 7) {
+                    float capIter = maxIter * 0.97;
+                    t = iter / capIter;
+                    t = clamp(t, 0.0, 1.0);
+                } else if (u_colorMapping == 8) {
+                    float cyclePeriod = max(u_cyclePeriod, 1.0);
+                    t = fract(iter / cyclePeriod);
+                } else {
+                    t = iter / maxIter;
+                }
+                
+                color = mapHueToRGB(t, u_hueMapping);
+            }
+            
+            gl_FragColor = vec4(color, 1.0);
+        }
+    </script>
+
+    <!-- Split JavaScript modules -->
+    <script src="js/constants.js"></script>
+    <script src="js/transform.js"></script>
+    <script src="js/cpu-physics.js"></script>
+    <script src="js/chaos-renderer-cpu.js"></script>
+    <script src="js/pendulum-sim-cpu.js"></script>
+    <script src="js/chaos-renderer.js"></script>
+    <script src="js/chaos-renderer-ui.js"></script>
+    <script src="js/chaos-renderer-stack.js"></script>
+    <script src="js/chaos-renderer-map.js"></script>
+    <script src="js/chaos-renderer-pendulum.js"></script>
+    <script src="js/chaos-renderer-render.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

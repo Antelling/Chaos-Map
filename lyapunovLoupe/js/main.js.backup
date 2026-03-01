@@ -1,0 +1,3291 @@
+import { ShaderCompiler } from './webgl-utils.js';
+import { TextureManager, PingPongBuffers } from './texture-manager.js';
+import { UI } from './ui.js';
+import { DebugVisualizer } from './debug-visualizer.js';
+import { AnimationStorage } from './animation-storage.js';
+import { AnimationAssembler } from './animation-assembler.js';
+
+export class ChaosRenderer {
+  constructor(canvas, container) {
+    this.canvas = canvas;
+    this.container = container;
+
+    if (!canvas) {
+      throw new Error('Canvas element is null or undefined');
+    }
+
+    try {
+      this.gl = ShaderCompiler.createContext(canvas);
+    } catch (e) {
+      console.error('Failed to create WebGL2 context:', e.message);
+      console.log('Canvas dimensions:', canvas.width, 'x', canvas.height);
+      console.log('Canvas in DOM:', document.contains(canvas));
+      throw e;
+    }
+
+    this.textureManager = new TextureManager(this.gl);
+
+    this.thresholdAccumulatedData = null;
+    this.thresholdCrossedData = null;
+
+    this.ui = new UI(canvas, document.body);
+    this.debugVisualizer = new DebugVisualizer(this, this.ui);
+    this.attachUIEvents();
+
+    this.resolution = 512;
+
+    // Tile-based rendering for high resolution support
+    this.tileCanvas = null;
+    this.tileGl = null;
+    this.tileProgram = null;
+    this.tilePositionBuffer = null;
+    this.tileSize = 64;
+    this.pingPongBuffers = null;
+    this.stateTexture = null;
+    this.prevStateTexture = null;
+    this.perturbationTexture = null;
+    this.ftleTexture = null;
+    this.accumulatedFtleTexture = null;
+    this.accumulatedFtleTextureAlt = null;
+    this.accumulateFramebuffer = null;
+    this.accumulateReadIndex = 0;
+    this.accumulatedFrameCount = 0;
+
+    this.bob2DistanceTexture = null;
+    this.bob2DistanceTextureAlt = null;
+    this.bob2DistanceFramebuffer = null;
+    this.bob2DistanceReadIndex = 0;
+    this.bob2DistanceAccumulatedFrameCount = 0;
+    this.accumulateProgram = null;
+    this.bob2DistanceProgram = null;
+    this.simulationProgram = null;
+    this.renderProgram = null;
+    this.isSimulationRunning = false;
+    this.viewMode = 'instant';
+    this.isFirstFrame = true;
+    this.vao = null;
+    this.dtLoc = null;
+    this.pertScaleLoc = null;
+    this.numPertLoc = null;
+    this.chunkIterLoc = null;
+    this.isFirstChunkLoc = null;
+    this.stateLoc = null;
+
+    this.chunkSize = 64;
+    this.currentChunkX = 0;
+    this.currentChunkY = 0;
+    this.totalChunksX = 1;
+    this.totalChunksY = 1;
+    this.isChunkedComputation = false;
+    this.chunkProgress = 0;
+    this.chunkPingPongBuffers = null;
+    this.fullResolutionBuffers = null;
+
+    this.animationStorage = new AnimationStorage();
+    this.animationAssembler = new AnimationAssembler(this.animationStorage);
+    this.frameCount = 0;
+    this.cachedFtleRange = null;
+    this.isAnimationPlaying = false;
+    this.savedFrames = [];
+    this.currentFrameIndex = 0;
+    this.viewingSavedFrame = false;
+    this.savedFrameViewType = null;
+    this.ui.setGenerateFrameEnabled(true);
+
+    this.framesSinceLastSave = 0;
+    this.internalFrameCounter = 0;
+
+    this.vertexBuffer = this.createFullscreenQuad();
+    this.systemShaders = this.loadSystemShaders();
+
+    this.initialize();
+  }
+
+  async initialize() {
+    await this.loadShaders();
+    await this.compileRenderProgram();
+    this.createTextures();
+    this.createBuffers();
+    this.resizeCanvas();
+    window.addEventListener('resize', () => this.resizeCanvas());
+
+    this.canvas.addEventListener('webglcontextlost', (e) => {
+      console.warn('Main WebGL context lost');
+      this.setButtonsState(true);
+      e.preventDefault();
+    });
+
+    this.canvas.addEventListener('webglcontextrestored', async () => {
+      console.log('Main WebGL context restored, recreating resources...');
+      await this.handleContextRestored();
+    });
+
+    this.tileCanvas = document.createElement('canvas');
+    this.tileCanvas.width = this.tileSize;
+    this.tileCanvas.height = this.tileSize;
+
+    this.tileGl = this.tileCanvas.getContext('webgl', {
+      antialias: false,
+      preserveDrawingBuffer: true,
+      powerPreference: 'high-performance'
+    });
+
+    if (!this.tileGl) {
+      console.error('Tile WebGL context not supported');
+    } else {
+      console.log('Tile WebGL context created successfully');
+
+      this.tileCanvas.addEventListener('webglcontextlost', (e) => {
+        console.warn('Tile WebGL context lost');
+        e.preventDefault();
+      });
+
+      this.tileCanvas.addEventListener('webglcontextrestored', () => {
+        console.log('Tile WebGL context restored');
+      });
+
+      await this.setupTileShader();
+    }
+  }
+
+  async loadShaders() {
+    const basePath = new URL('..', import.meta.url).href;
+    const commonSource = await this.fetchShader(basePath + 'shaders/common.glsl');
+    const rk4Source = await this.fetchShader(basePath + 'shaders/integrator-rk4.glsl');
+    const verletSource = await this.fetchShader(basePath + 'shaders/integrator-verlet.glsl');
+    const renderSource = await this.fetchShader(basePath + 'shaders/render-ftle.glsl');
+    console.log('Render shader loaded, has u_isBob2Distance:', renderSource.includes('u_isBob2Distance'));
+    const accumulateSource = await this.fetchShader(basePath + 'shaders/accumulate-ftle.glsl');
+    const bob2DistanceSource = await this.fetchShader(basePath + 'shaders/accumulate-bob2-distance.glsl');
+
+    console.log('Shaders loaded successfully');
+
+    this.shaders = {
+      common: commonSource,
+      rk4: rk4Source,
+      verlet: verletSource,
+      render: renderSource,
+      accumulate: accumulateSource,
+      bob2Distance: bob2DistanceSource
+    };
+  }
+
+  async fetchShader(path) {
+    const cacheBuster = `?v=${Date.now()}`;
+    const response = await fetch(path + cacheBuster);
+    if (!response.ok) {
+      throw new Error(`Failed to load shader: ${path} (${response.status})`);
+    }
+    return await response.text();
+  }
+
+  loadSystemShaders() {
+    const basePath = new URL('..', import.meta.url).href;
+    return {
+      'double-pendulum': basePath + 'shaders/system-double-pendulum.glsl',
+      'elastic-pendulum': basePath + 'shaders/system-elastic-pendulum.glsl',
+      'henon-heiles': basePath + 'shaders/system-henon-heiles.glsl',
+      'duffing': basePath + 'shaders/system-duffing.glsl'
+    };
+  }
+
+  async compileSimulationProgram(system) {
+    const systemSource = await this.fetchShader(this.systemShaders[system]);
+    const integratorSource = this.ui.getState().integrator === 'rk4'
+      ? this.shaders.rk4
+      : this.shaders.verlet;
+
+    const simulationFragmentShader = this.buildSimulationShader(
+      this.shaders.common,
+      systemSource,
+      integratorSource
+    );
+
+    console.log('Creating simulation program for system:', system);
+
+    this.simulationProgram = ShaderCompiler.createProgramFromSource(
+      this.gl,
+      ShaderCompiler.getFullscreenQuadVertexShader(),
+      simulationFragmentShader,
+      null
+    );
+
+    if (!this.simulationProgram) {
+      console.error('Failed to create simulation program');
+      throw new Error('Failed to create simulation program');
+    }
+
+    this.gl.useProgram(this.simulationProgram);
+    const stateLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_stateTexture');
+    const pertLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_perturbationTexture');
+    const noiseLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_noiseTexture');
+
+    this.gl.uniform1i(stateLoc, 0);
+    this.gl.uniform1i(pertLoc, 1);
+    this.gl.uniform1i(noiseLoc, 3);
+    this.gl.useProgram(null);
+  }
+
+  buildSimulationShader(commonSource, systemSource, integratorSource) {
+    const commonWithoutHeader = commonSource.replace(/^#version.*$\n?/m, '').replace(/^precision.*$\n?/m, '');
+    const systemWithoutHeader = systemSource.replace(/^#version.*$\n?/m, '').replace(/^precision.*$\n?/m, '');
+
+    const systemDeriv = systemWithoutHeader.match(/vec4\s+systemDeriv\s*\([^)]*\)\s*\{[\s\S]*?\n\}/s);
+    const systemDerivCode = systemDeriv ? systemDeriv[0] : systemWithoutHeader;
+
+    const integratorWithoutHeader = integratorSource.replace(/^#version.*$\n?/m, '').replace(/^precision.*$\n?/m, '');
+    const integratorWithoutForwardDecl = integratorWithoutHeader.replace(/^vec4\s+systemDeriv\s*\([^)]*\);\s*$/m, '');
+
+    return `#version 300 es
+precision highp float;
+
+${commonWithoutHeader}
+
+${systemDerivCode}
+
+${integratorWithoutForwardDecl}`;
+  }
+
+  async compileRenderProgram() {
+    const vertexShader = ShaderCompiler.getFullscreenQuadVertexShader();
+    this.renderProgram = ShaderCompiler.createProgramFromSource(
+      this.gl,
+      vertexShader,
+      this.shaders.render
+    );
+
+    if (!this.renderProgram) {
+      throw new Error('Failed to compile render program');
+    }
+
+    const glError = this.gl.getError();
+    if (glError !== this.gl.NO_ERROR) {
+      console.error('GL error after compileRenderProgram:', glError);
+    }
+  }
+
+  async compileAccumulateProgram() {
+    if (this.accumulateProgram) {
+      this.gl.deleteProgram(this.accumulateProgram);
+    }
+
+    const vertexShader = ShaderCompiler.getFullscreenQuadVertexShader();
+    this.accumulateProgram = ShaderCompiler.createProgramFromSource(
+      this.gl,
+      vertexShader,
+      this.shaders.accumulate
+    );
+
+    if (!this.accumulateProgram) {
+      throw new Error('Failed to compile accumulate program');
+    }
+
+    this.gl.useProgram(this.accumulateProgram);
+    const currentFtleLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_currentFtle');
+    const accumulatedFtleLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_accumulatedFtle');
+    const resetLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_reset');
+
+    this.gl.uniform1i(currentFtleLoc, 0);
+    this.gl.uniform1i(accumulatedFtleLoc, 1);
+    this.gl.useProgram(null);
+
+    console.log('Accumulate program compiled successfully');
+  }
+
+  async compileBob2DistanceProgram() {
+    if (this.bob2DistanceProgram) {
+      this.gl.deleteProgram(this.bob2DistanceProgram);
+    }
+
+    const vertexShader = ShaderCompiler.getFullscreenQuadVertexShader();
+    this.bob2DistanceProgram = ShaderCompiler.createProgramFromSource(
+      this.gl,
+      vertexShader,
+      this.shaders.bob2Distance
+    );
+
+    if (!this.bob2DistanceProgram) {
+      throw new Error('Failed to compile bob2 distance program');
+    }
+
+    this.gl.useProgram(this.bob2DistanceProgram);
+    const stateLoc = this.gl.getUniformLocation(this.bob2DistanceProgram, 'u_stateTexture');
+    const accumulatedLoc = this.gl.getUniformLocation(this.bob2DistanceProgram, 'u_accumulatedDistance');
+    const resetLoc = this.gl.getUniformLocation(this.bob2DistanceProgram, 'u_reset');
+
+    this.gl.uniform1i(stateLoc, 0);
+    this.gl.uniform1i(accumulatedLoc, 1);
+    this.gl.useProgram(null);
+
+    console.log('Bob2 distance program compiled successfully');
+  }
+
+  async handleContextRestored() {
+    try {
+      console.log('Recreating WebGL context and resources...');
+
+      this.gl = ShaderCompiler.createContext(this.canvas);
+      this.textureManager = new TextureManager(this.gl);
+
+      this.createTextures();
+      this.createBuffers();
+      this.resizeCanvas();
+
+      await this.compileRenderProgram();
+
+      console.log('WebGL resources recreated successfully');
+      this.setButtonsState(false);
+    } catch (error) {
+      console.error('Failed to restore WebGL context:', error);
+      alert('Failed to restore WebGL context. Please refresh the page.');
+    }
+  }
+
+  async setupTileShader() {
+    const gl = this.tileGl;
+    if (!gl) {
+      console.error('Tile WebGL context not available for shader setup');
+      return;
+    }
+
+    const basePath = new URL('..', import.meta.url).href;
+    const fragmentSource = await this.fetchShader(basePath + 'shaders/render-tile.glsl');
+
+    const vertexSource = `
+attribute vec2 a_position;
+varying vec2 v_texCoord;
+void main() {
+    v_texCoord = (a_position + 1.0) * 0.5;
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`;
+
+    const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertexShader, vertexSource);
+    gl.compileShader(vertexShader);
+
+    if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+      console.error('Tile vertex shader compile error:', gl.getShaderInfoLog(vertexShader));
+      return;
+    }
+
+    const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragmentShader, fragmentSource);
+    gl.compileShader(fragmentShader);
+
+    if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+      console.error('Tile fragment shader compile error:', gl.getShaderInfoLog(fragmentShader));
+      return;
+    }
+
+    this.tileProgram = gl.createProgram();
+    gl.attachShader(this.tileProgram, vertexShader);
+    gl.attachShader(this.tileProgram, fragmentShader);
+    gl.linkProgram(this.tileProgram);
+
+    if (!gl.getProgramParameter(this.tileProgram, gl.LINK_STATUS)) {
+      console.error('Tile program link error:', gl.getProgramInfoLog(this.tileProgram));
+      return;
+    }
+
+    const positions = new Float32Array([
+      -1.0, -1.0,
+       1.0, -1.0,
+      -1.0,  1.0,
+      -1.0,  1.0,
+       1.0, -1.0,
+       1.0,  1.0
+    ]);
+
+    this.tilePositionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tilePositionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+    console.log('Tile shader program compiled successfully');
+  }
+
+  renderTile(ftleTexture, tileOffsetX, tileOffsetY, width, height) {
+    const gl = this.tileGl;
+    const program = this.tileProgram;
+    if (!gl || !program) return null;
+
+    if (gl.isContextLost()) {
+      console.warn('Tile WebGL context lost, skipping tile render');
+      return null;
+    }
+
+    const setUniform = (name, setter, ...values) => {
+      const loc = gl.getUniformLocation(program, name);
+      if (loc !== null) {
+        setter.call(gl, loc, ...values);
+      }
+    };
+
+    if (this.tileCanvas.width !== width || this.tileCanvas.height !== height) {
+      this.tileCanvas.width = width;
+      this.tileCanvas.height = height;
+    }
+
+    gl.viewport(0, 0, width, height);
+    gl.useProgram(program);
+
+    const state = this.ui.getState();
+    const range = this.cachedFtleRange || { min: state.mappingMin, max: state.mappingMax };
+    setUniform('u_colorMode', gl.uniform1i, state.colorMode);
+    setUniform('u_minFtle', gl.uniform1f, range.min);
+    setUniform('u_maxFtle', gl.uniform1f, range.max);
+    setUniform('u_ftleChannel', gl.uniform1i, state.integrator === 'verlet' ? 3 : 0);
+    setUniform('u_integrationSteps', gl.uniform1i, state.integrationSteps);
+    setUniform('u_dt', gl.uniform1f, state.dt);
+    setUniform('u_isAccumulated', gl.uniform1i, this.viewMode === 'accumulated' ? 1 : 0);
+
+    const ftleLoc = gl.getUniformLocation(program, 'u_ftleTexture');
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, ftleTexture);
+    gl.uniform1i(ftleLoc, 0);
+
+    if (this.tilePositionBuffer) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.tilePositionBuffer);
+    }
+    const positionLocation = gl.getAttribLocation(program, 'a_position');
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    const pixels = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    const imageData = new ImageData(width, height);
+    const data = imageData.data;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const srcIdx = ((height - 1 - y) * width + x) * 4;
+        const dstIdx = (y * width + x) * 4;
+        data[dstIdx] = pixels[srcIdx];
+        data[dstIdx + 1] = pixels[srcIdx + 1];
+        data[dstIdx + 2] = pixels[srcIdx + 2];
+        data[dstIdx + 3] = pixels[srcIdx + 3];
+      }
+    }
+
+    return imageData;
+  }
+
+  updateTileProgress(progress, tileCount, totalTiles) {
+    const progressFill = document.getElementById('tile-progress-fill');
+    const progressText = document.getElementById('tile-progress-text');
+    if (progressFill) progressFill.style.width = progress + '%';
+    if (progressText) progressText.textContent = `${Math.round(progress)}% (${tileCount}/${totalTiles})`;
+  }
+
+  async renderTiles(ftleTexture, resolution) {
+    const tileSize = this.tileSize;
+    const tilesX = Math.ceil(resolution / tileSize);
+    const tilesY = Math.ceil(resolution / tileSize);
+    const totalTiles = tilesX * tilesY;
+
+    let tileCount = 0;
+
+    const progressPanel = document.getElementById('progress-panel');
+    if (progressPanel) progressPanel.style.display = 'block';
+
+    console.log('Starting tile rendering:', tilesX, 'x', tilesY, '=', totalTiles, 'tiles');
+
+    if (!this.displayCanvas) {
+      this.displayCanvas = document.createElement('canvas');
+      this.displayCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+      this.canvas.parentElement.insertBefore(this.displayCanvas, this.canvas.nextSibling);
+      this.displayCtx = this.displayCanvas.getContext('2d');
+    }
+    
+    this.displayCanvas.width = this.canvas.width;
+    this.displayCanvas.height = this.canvas.height;
+    this.displayCtx.clearRect(0, 0, this.displayCanvas.width, this.displayCanvas.height);
+
+    for (let ty = 0; ty < tilesY; ty++) {
+      for (let tx = 0; tx < tilesX; tx++) {
+        if (!this.isSimulationRunning) {
+          console.log('Tile rendering cancelled');
+          if (progressPanel) progressPanel.style.display = 'none';
+          return;
+        }
+
+        const tileOffsetX = tx * tileSize;
+        const tileOffsetY = ty * tileSize;
+        const actualTileW = Math.min(tileSize, resolution - tileOffsetX);
+        const actualTileH = Math.min(tileSize, resolution - tileOffsetY);
+
+        const imageData = this.readTilePixels(ftleTexture, tileOffsetX, tileOffsetY, actualTileW, actualTileH);
+
+        if (!imageData) continue;
+
+        const scaleX = this.canvas.width / resolution;
+        const scaleY = this.canvas.height / resolution;
+        const drawX = tileOffsetX * scaleX;
+        const drawY = tileOffsetY * scaleY;
+        const drawW = actualTileW * scaleX;
+        const drawH = actualTileH * scaleY;
+
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = actualTileW;
+        tempCanvas.height = actualTileH;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.putImageData(imageData, 0, 0);
+
+        this.displayCtx.drawImage(tempCanvas, drawX, drawY, drawW, drawH);
+
+        tileCount++;
+        const progress = (tileCount / totalTiles) * 100;
+        this.updateTileProgress(progress, tileCount, totalTiles);
+
+        await new Promise(r => requestAnimationFrame(r));
+      }
+    }
+
+    if (progressPanel) progressPanel.style.display = 'none';
+    console.log('Tile rendering complete:', tileCount, 'tiles rendered');
+  }
+
+  readTilePixels(ftleTexture, tileOffsetX, tileOffsetY, width, height) {
+    const gl = this.gl;
+    const resolution = this.resolution;
+
+    const tempFb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, tempFb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ftleTexture, 0);
+
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error('Framebuffer incomplete for tile read');
+      gl.deleteFramebuffer(tempFb);
+      return null;
+    }
+
+    const pixels = new Float32Array(width * height * 4);
+    gl.readPixels(tileOffsetX, resolution - tileOffsetY - height, width, height, gl.RGBA, gl.FLOAT, pixels);
+
+    gl.deleteFramebuffer(tempFb);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const state = this.ui.getState();
+    const imageData = new ImageData(width, height);
+    const data = imageData.data;
+
+    const totalTime = state.integrationSteps * state.dt;
+
+    const rangeConfig = this.cachedFtleRange || { min: state.mappingMin, max: state.mappingMax };
+    const minFtle = rangeConfig.min;
+    const maxFtle = rangeConfig.max;
+    const range = maxFtle - minFtle;
+
+    let minFtleVal = Infinity, maxFtleVal = -Infinity;
+    let minNumSamples = Infinity, maxNumSamples = -Infinity;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const srcIdx = ((height - 1 - y) * width + x) * 4;
+        const dstIdx = (y * width + x) * 4;
+
+        const maxLogGrowth = pixels[srcIdx];
+        const hasValidData = pixels[srcIdx + 1];
+
+        let ftle = 0;
+        if (totalTime > 0 && hasValidData > 0) {
+          ftle = maxLogGrowth / totalTime;  // FTLE = max growth / time (not average)
+        }
+
+        const normalized = Math.max(0, Math.min(1, (ftle - minFtle) / range));
+        const color = this.colormap(normalized, state.colorMode);
+
+        if (Number.isFinite(ftle)) {
+          minFtleVal = Math.min(minFtleVal, ftle);
+          maxFtleVal = Math.max(maxFtleVal, ftle);
+        }
+        if (Number.isFinite(numSamples)) {
+          minNumSamples = Math.min(minNumSamples, numSamples);
+          maxNumSamples = Math.max(maxNumSamples, numSamples);
+        }
+
+        data[dstIdx] = color[0];
+        data[dstIdx + 1] = color[1];
+        data[dstIdx + 2] = color[2];
+        data[dstIdx + 3] = 255;
+      }
+    }
+
+    if (tileOffsetX === 0 && tileOffsetY === 0) {
+      console.log('=== FTLE DEBUG (first tile) ===');
+      console.log('totalTime:', totalTime, '(integrationSteps:', state.integrationSteps, '* dt:', state.dt, ')');
+      console.log('numSamples range:', minNumSamples, 'to', maxNumSamples);
+      console.log('FTLE range:', minFtleVal, 'to', maxFtleVal);
+    }
+
+    return imageData;
+  }
+
+  colormap(t, mode) {
+    switch (mode) {
+      case 0: return this.colormapViridis(t);
+      case 1: return this.colormapMagma(t);
+      case 2: return this.colormapPlasma(t);
+      case 3: return this.colormapInferno(t);
+      case 4: return this.colormapTurbo(t);
+      case 5: return this.colormapJet(t);
+      case 6: return this.colormapRainbow(t);
+      case 7: return this.colormapHot(t);
+      case 8: return this.colormapCool(t);
+      case 9: return this.colormapSpring(t);
+      case 10: return this.colormapSummer(t);
+      case 11: return this.colormapAutumn(t);
+      case 12: return this.colormapWinter(t);
+      case 13: return this.colormapBone(t);
+      case 14: return this.colormapCopper(t);
+      case 15: return this.colormapPink(t);
+      case 16: return this.colormapHSV(t);
+      case 17: return this.colormapTwilight(t);
+      case 18: return this.colormapCubehelix(t);
+      case 19: return this.colormapCividis(t);
+      default: return [Math.floor(t * 255), Math.floor(t * 255), Math.floor(t * 255)];
+    }
+  }
+
+  colormapViridis(t) {
+    const c0 = [68, 1, 84];
+    const c1 = [33, 145, 140];
+    const c2 = [253, 231, 37];
+
+    if (t < 0.5) {
+      const s = t * 2;
+      return [
+        Math.floor(c0[0] + (c1[0] - c0[0]) * s),
+        Math.floor(c0[1] + (c1[1] - c0[1]) * s),
+        Math.floor(c0[2] + (c1[2] - c0[2]) * s)
+      ];
+    } else {
+      const s = (t - 0.5) * 2;
+      return [
+        Math.floor(c1[0] + (c2[0] - c1[0]) * s),
+        Math.floor(c1[1] + (c2[1] - c1[1]) * s),
+        Math.floor(c1[2] + (c2[2] - c1[2]) * s)
+      ];
+    }
+  }
+
+  colormapMagma(t) {
+    const c0 = [4, 5, 9];
+    const c1 = [148, 52, 110];
+    const c2 = [252, 253, 191];
+
+    if (t < 0.5) {
+      const s = t * 2;
+      return [
+        Math.floor(c0[0] + (c1[0] - c0[0]) * s),
+        Math.floor(c0[1] + (c1[1] - c0[1]) * s),
+        Math.floor(c0[2] + (c1[2] - c0[2]) * s)
+      ];
+    } else {
+      const s = (t - 0.5) * 2;
+      return [
+        Math.floor(c1[0] + (c2[0] - c1[0]) * s),
+        Math.floor(c1[1] + (c2[1] - c1[1]) * s),
+        Math.floor(c1[2] + (c2[2] - c1[2]) * s)
+      ];
+    }
+  }
+
+  colormapPlasma(t) {
+    const c0 = [13, 8, 135];
+    const c1 = [156, 23, 158];
+    const c2 = [240, 249, 33];
+
+    if (t < 0.5) {
+      const s = t * 2;
+      return [
+        Math.floor(c0[0] + (c1[0] - c0[0]) * s),
+        Math.floor(c0[1] + (c1[1] - c0[1]) * s),
+        Math.floor(c0[2] + (c1[2] - c0[2]) * s)
+      ];
+    } else {
+      const s = (t - 0.5) * 2;
+      return [
+        Math.floor(c1[0] + (c2[0] - c1[0]) * s),
+        Math.floor(c1[1] + (c2[1] - c1[1]) * s),
+        Math.floor(c1[2] + (c2[2] - c1[2]) * s)
+      ];
+    }
+  }
+
+  colormapInferno(t) {
+    const c0 = [0, 0, 4];
+    const c1 = [187, 55, 84];
+    const c2 = [252, 255, 164];
+
+    if (t < 0.5) {
+      const s = t * 2;
+      return [
+        Math.floor(c0[0] + (c1[0] - c0[0]) * s),
+        Math.floor(c0[1] + (c1[1] - c0[1]) * s),
+        Math.floor(c0[2] + (c1[2] - c0[2]) * s)
+      ];
+    } else {
+      const s = (t - 0.5) * 2;
+      return [
+        Math.floor(c1[0] + (c2[0] - c1[0]) * s),
+        Math.floor(c1[1] + (c2[1] - c1[1]) * s),
+        Math.floor(c1[2] + (c2[2] - c1[2]) * s)
+      ];
+    }
+  }
+
+  colormapTurbo(t) {
+    const r = Math.floor(Math.max(0, Math.min(255, 48 + 227 * Math.sin((t - 0.5) * Math.PI))));
+    const g = Math.floor(Math.max(0, Math.min(255, t < 0.5 ? t * 400 : (1 - t) * 400)));
+    const b = Math.floor(Math.max(0, Math.min(255, 128 + 127 * Math.cos(t * Math.PI))));
+    return [r, g, b];
+  }
+
+  colormapJet(t) {
+    const r = Math.floor(Math.max(0, Math.min(255, t < 0.5 ? 0 : (t - 0.5) * 510)));
+    const g = Math.floor(Math.max(0, Math.min(255, t < 0.25 ? t * 1020 : t < 0.75 ? 255 : (1 - t) * 1020)));
+    const b = Math.floor(Math.max(0, Math.min(255, t < 0.5 ? (0.5 - t) * 510 : 0)));
+    return [r, g, b];
+  }
+
+  colormapRainbow(t) {
+    const r = Math.floor(Math.max(0, Math.min(255, Math.sin(t * Math.PI * 2) * 127 + 128)));
+    const g = Math.floor(Math.max(0, Math.min(255, Math.sin(t * Math.PI * 2 + 2) * 127 + 128)));
+    const b = Math.floor(Math.max(0, Math.min(255, Math.sin(t * Math.PI * 2 + 4) * 127 + 128)));
+    return [r, g, b];
+  }
+
+  colormapHot(t) {
+    return [
+      Math.floor(Math.min(255, t * 3 * 255)),
+      Math.floor(Math.min(255, Math.max(0, (t - 0.33) * 3 * 255))),
+      Math.floor(Math.min(255, Math.max(0, (t - 0.66) * 3 * 255)))
+    ];
+  }
+
+  colormapCool(t) {
+    return [
+      Math.floor(t * 255),
+      Math.floor((1 - t) * 255),
+      255
+    ];
+  }
+
+  colormapSpring(t) {
+    return [255, Math.floor(t * 255), Math.floor((1 - t) * 255)];
+  }
+
+  colormapSummer(t) {
+    return [Math.floor(t * 255), Math.floor(0.5 + t * 0.5) * 255, Math.floor(0.4 * 255)];
+  }
+
+  colormapAutumn(t) {
+    return [255, Math.floor(t * 255), 0];
+  }
+
+  colormapWinter(t) {
+    return [0, Math.floor(t * 255), Math.floor((1 - t) * 127 + 128)];
+  }
+
+  colormapBone(t) {
+    const v = Math.floor(t * 255);
+    const b = Math.floor(Math.min(255, t * 1.5 * 255));
+    return [v, v, b];
+  }
+
+  colormapCopper(t) {
+    const r = Math.floor(Math.min(255, t * 1.25 * 255));
+    const g = Math.floor(t * 0.78 * 255);
+    const b = Math.floor(t * 0.5 * 255);
+    return [r, g, b];
+  }
+
+  colormapPink(t) {
+    const v = Math.floor(t * 255);
+    return [
+      Math.floor(255 - 0.5 * (255 - v)),
+      Math.floor(255 - 0.75 * (255 - v)),
+      Math.floor(255 - 0.75 * (255 - v))
+    ];
+  }
+
+  colormapHSV(t) {
+    const r = Math.floor(Math.max(0, Math.min(255, Math.abs((t * 6) % 2 - 1) * 255)));
+    const g = Math.floor(Math.max(0, Math.min(255, Math.abs(((t * 6 + 2) % 2 - 1)) * 255)));
+    const b = Math.floor(Math.max(0, Math.min(255, Math.abs(((t * 6 + 4) % 2 - 1)) * 255)));
+    return [r, g, b];
+  }
+
+  colormapTwilight(t) {
+    const v = 0.5 + 0.5 * Math.cos(t * Math.PI * 2);
+    const c = Math.floor(v * 255);
+    return [c, c, Math.floor(128 + 64 * v)];
+  }
+
+  colormapCubehelix(t) {
+    const a = t * 2 * Math.PI;
+    const r = Math.floor(255 * (0.148 + 0.263 * Math.cos(a) + 0.08 * Math.sin(a)));
+    const g = Math.floor(255 * (0.299 + 0.154 * Math.cos(a) + 0.237 * Math.sin(a)));
+    const b = Math.floor(255 * (0.466 + 0.127 * Math.cos(a) - 0.312 * Math.sin(a)));
+    return [
+      Math.max(0, Math.min(255, r)),
+      Math.max(0, Math.min(255, g)),
+      Math.max(0, Math.min(255, b))
+    ];
+  }
+
+  colormapCividis(t) {
+    const c0 = [0, 32, 77];
+    const c1 = [122, 144, 129];
+    const c2 = [255, 232, 120];
+
+    if (t < 0.5) {
+      const s = t * 2;
+      return [
+        Math.floor(c0[0] + (c1[0] - c0[0]) * s),
+        Math.floor(c0[1] + (c1[1] - c0[1]) * s),
+        Math.floor(c0[2] + (c1[2] - c0[2]) * s)
+      ];
+    } else {
+      const s = (t - 0.5) * 2;
+      return [
+        Math.floor(c1[0] + (c2[0] - c1[0]) * s),
+        Math.floor(c1[1] + (c2[1] - c1[1]) * s),
+        Math.floor(c1[2] + (c2[2] - c1[2]) * s)
+      ];
+    }
+  }
+
+  createFullscreenQuad() {
+    const positions = new Float32Array([
+      -1.0, -1.0,
+      1.0, -1.0,
+      -1.0, 1.0,
+      1.0, 1.0
+    ]);
+
+    const buffer = this.gl.createBuffer();
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
+
+    return { buffer };
+  }
+
+  clearTexture(texture) {
+    const gl = this.gl;
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    gl.clearColor(0.0, 0.0, 0.0, 0.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.deleteFramebuffer(fb);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  createTextures() {
+    this.ftleTexture = this.textureManager.createFloatTexture(this.resolution, this.resolution);
+    this.accumulatedFtleTexture = this.textureManager.createAccumulationTexture(
+      this.resolution,
+      this.resolution
+    );
+    this.thresholdTexture = this.textureManager.createAccumulationTexture(
+      this.resolution,
+      this.resolution
+    );
+    this.clearTexture(this.thresholdTexture);
+
+    if (!this.accumulateFramebuffer) {
+      this.accumulateFramebuffer = this.gl.createFramebuffer();
+    }
+    if (!this.thresholdFramebuffer) {
+      this.thresholdFramebuffer = this.gl.createFramebuffer();
+    }
+  }
+
+  createBuffers() {
+    try {
+      if (!this.textureManager.floatRenderable) {
+        throw new Error('Float render targets not supported on this GPU');
+      }
+
+      const maxAttachments = this.gl.getParameter(this.gl.MAX_COLOR_ATTACHMENTS);
+      const numAttachments = Math.min(3, maxAttachments);
+      console.log(`Creating ping-pong buffers with ${numAttachments} color attachments (max: ${maxAttachments})`);
+      console.log(`Using float format: ${this.textureManager.floatFormat === this.gl.RGBA32F ? 'RGBA32F' : 'RGBA16F'}`);
+
+      this.pingPongBuffers = new PingPongBuffers(
+        this.gl,
+        this.textureManager,
+        this.resolution,
+        this.resolution,
+        2,
+        numAttachments
+      );
+      console.log('Ping-pong buffers created successfully');
+    } catch (error) {
+      console.error('Failed to create buffers:', error);
+      throw error;
+    }
+  }
+
+  copyInitialStateToPingPong() {
+    const readBuffer = this.pingPongBuffers.getRead();
+    const initialData = this.generateInitialStateData();
+
+    this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, null);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, readBuffer.textures.color0);
+    this.gl.texSubImage2D(
+      this.gl.TEXTURE_2D, 0, 0, 0,
+      this.resolution, this.resolution,
+      this.gl.RGBA, this.gl.FLOAT, initialData
+    );
+    this.gl.bindTexture(this.gl.TEXTURE_2D, null);
+  }
+
+  resize(width, height) {
+    this.canvas.width = width;
+    this.canvas.height = height;
+    this.gl.viewport(0, 0, width, height);
+
+    if (this.pingPongBuffers) {
+      this.pingPongBuffers.resize(this.resolution, this.resolution);
+    }
+
+    if (this.ftleTexture) {
+      this.gl.deleteTexture(this.ftleTexture);
+      this.ftleTexture = this.textureManager.createFloatTexture(this.resolution, this.resolution);
+    }
+
+    if (this.accumulatedFtleTexture) {
+      this.gl.deleteTexture(this.accumulatedFtleTexture);
+      this.accumulatedFtleTexture = this.textureManager.createAccumulationTexture(
+        this.resolution,
+        this.resolution
+      );
+    }
+  }
+
+  resizeCanvas() {
+    const rect = this.container.getBoundingClientRect();
+    const size = Math.min(rect.width, rect.height);
+    this.canvas.width = size;
+    this.canvas.height = size;
+    this.gl.viewport(0, 0, size, size);
+  }
+
+  generateInitialStateData() {
+    const data = new Float32Array(this.resolution * this.resolution * 4);
+    const state = this.ui.getState();
+    const system = state.system;
+    const basis = state.basisPoint;
+    const xDim = state.xDim;
+    const yDim = state.yDim;
+    const xRange = state.xRange;
+    const yRange = state.yRange;
+    const deltaMode = state.deltaMode;
+
+    for (let y = 0; y < this.resolution; y++) {
+      for (let x = 0; x < this.resolution; x++) {
+        const i = (y * this.resolution + x) * 4;
+
+        const u = x / this.resolution;
+        const v = 1.0 - y / this.resolution;
+
+        const xVal = xRange[0] + u * (xRange[1] - xRange[0]);
+        const yVal = yRange[0] + v * (yRange[1] - yRange[0]);
+
+        let s1, s2, s3, s4;
+
+        if (system === 'double-pendulum' || system === 'elastic-pendulum') {
+          s1 = deltaMode ? basis.theta1 + xVal : xVal;
+          s2 = basis.omega1;
+          s3 = deltaMode ? basis.theta2 + yVal : yVal;
+          s4 = basis.omega2;
+
+          if (xDim === 'omega1') s2 = deltaMode ? basis.omega1 + xVal : xVal;
+          else if (xDim === 'omega2') s4 = deltaMode ? basis.omega2 + xVal : xVal;
+
+          if (yDim === 'omega1') s2 = deltaMode ? basis.omega1 + yVal : yVal;
+          else if (yDim === 'omega2') s4 = deltaMode ? basis.omega2 + yVal : yVal;
+
+        } else if (system === 'henon-heiles') {
+          s1 = deltaMode ? basis.x + xVal : xVal;
+          s2 = basis.px;
+          s3 = deltaMode ? basis.y + yVal : yVal;
+          s4 = basis.py;
+
+          if (xDim === 'px') s2 = deltaMode ? basis.px + xVal : xVal;
+          else if (xDim === 'py') s4 = deltaMode ? basis.py + xVal : xVal;
+
+          if (yDim === 'px') s2 = deltaMode ? basis.px + yVal : yVal;
+          else if (yDim === 'py') s4 = deltaMode ? basis.py + yVal : yVal;
+
+        } else if (system === 'duffing') {
+          s1 = deltaMode ? basis.x + xVal : xVal;
+          s2 = deltaMode ? basis.v + yVal : yVal;
+          s3 = basis.t;
+          s4 = 0.0;
+
+          if (xDim === 'v') s2 = deltaMode ? basis.v + xVal : xVal;
+          else if (xDim === 't') s3 = deltaMode ? basis.t + xVal : xVal;
+
+          if (yDim === 'x') s1 = deltaMode ? basis.x + yVal : yVal;
+          else if (yDim === 't') s3 = deltaMode ? basis.t + yVal : yVal;
+        }
+
+        data[i] = s1;
+        data[i + 1] = s2;
+        data[i + 2] = s3;
+        data[i + 3] = s4;
+
+        // DEBUG: Log first few pixels
+        if (i < 4 * 4) {
+          console.log(`pixel (${x},${y}) idx=${i}: s1=${s1}, s2=${s2}, s3=${s3}, s4=${s4}`);
+        }
+      }
+    }
+
+    console.log('State data generated with system:', system, 'mapping:', xDim, '->', yDim);
+    return data;
+  }
+
+  initializeStateTexture(stateData) {
+    if (stateData) {
+      return this.textureManager.createFloatTexture(
+        this.resolution,
+        this.resolution,
+        stateData
+      );
+    }
+    return this.textureManager.createFloatTexture(
+      this.resolution,
+      this.resolution,
+      this.generateInitialStateData()
+    );
+  }
+
+  initializePerturbationTexture() {
+    const state = this.ui.getState();
+    const scale = state.perturbationScale;
+
+    const data = new Float32Array(this.resolution * this.resolution * 4);
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = (Math.random() - 0.5) * scale;
+      data[i + 1] = (Math.random() - 0.5) * scale;
+      data[i + 2] = (Math.random() - 0.5) * scale;
+      data[i + 3] = (Math.random() - 0.5) * scale;
+    }
+    const texture = this.textureManager.createFloatTexture(this.resolution, this.resolution, data);
+    console.log('Perturbation texture initialized with scale:', scale);
+    return texture;
+  }
+
+  initializeNoiseTexture(maxPerturbations = 64) {
+    // Calculate grid size to fit all perturbations in a square grid
+    // This avoids exceeding WebGL max texture size (typically 4096-16384)
+    const gridSize = Math.ceil(Math.sqrt(maxPerturbations));
+    const textureWidth = this.resolution * gridSize;
+    const textureHeight = this.resolution * gridSize;
+    
+    const data = new Float32Array(textureWidth * textureHeight * 4);
+    
+    // Arrange perturbations in a 2D grid instead of vertical stack
+    for (let p = 0; p < maxPerturbations; p++) {
+      const gridX = p % gridSize;
+      const gridY = Math.floor(p / gridSize);
+      
+      for (let y = 0; y < this.resolution; y++) {
+        for (let x = 0; x < this.resolution; x++) {
+          const texX = gridX * this.resolution + x;
+          const texY = gridY * this.resolution + y;
+          const i = (texY * textureWidth + texX) * 4;
+          data[i] = Math.random();
+          data[i + 1] = Math.random();
+          data[i + 2] = Math.random();
+          data[i + 3] = Math.random();
+        }
+      }
+    }
+    
+    const texture = this.textureManager.createFloatTexture(textureWidth, textureHeight, data);
+    console.log('Noise texture initialized:', textureWidth, 'x', textureHeight, '(grid:', gridSize, 'x', gridSize, ')');
+    
+    // Store grid info for shader sampling
+    this.noiseGridSize = gridSize;
+    
+    return texture;
+  }
+
+  regenerateNoiseTexture() {
+    if (this.noiseTexture) {
+      this.gl.deleteTexture(this.noiseTexture);
+    }
+    this.noiseTexture = this.initializeNoiseTexture();
+  }
+
+  initializePrevStateTexture() {
+    const state = this.ui.getState();
+    const system = state.system;
+    const basis = state.basisPoint;
+    const xDim = state.xDim;
+    const yDim = state.yDim;
+    const xRange = state.xRange;
+    const yRange = state.yRange;
+    const deltaMode = state.deltaMode;
+
+    const data = new Float32Array(this.resolution * this.resolution * 4);
+    for (let y = 0; y < this.resolution; y++) {
+      for (let x = 0; x < this.resolution; x++) {
+        const i = (y * this.resolution + x) * 4;
+
+        const u = x / this.resolution;
+        const v = 1.0 - y / this.resolution;
+
+        const xVal = xRange[0] + u * (xRange[1] - xRange[0]);
+        const yVal = yRange[0] + v * (yRange[1] - yRange[0]);
+
+        let s1, s2, s3, s4;
+
+        if (system === 'double-pendulum' || system === 'elastic-pendulum') {
+          s1 = deltaMode ? basis.theta1 + xVal : xVal;
+          s2 = basis.omega1;
+          s3 = deltaMode ? basis.theta2 + yVal : yVal;
+          s4 = basis.omega2;
+
+          if (xDim === 'omega1') s2 = deltaMode ? basis.omega1 + xVal : xVal;
+          else if (xDim === 'omega2') s4 = deltaMode ? basis.omega2 + xVal : xVal;
+
+          if (yDim === 'omega1') s2 = deltaMode ? basis.omega1 + yVal : yVal;
+          else if (yDim === 'omega2') s4 = deltaMode ? basis.omega2 + yVal : yVal;
+
+        } else if (system === 'henon-heiles') {
+          s1 = deltaMode ? basis.x + xVal : xVal;
+          s2 = basis.px;
+          s3 = deltaMode ? basis.y + yVal : yVal;
+          s4 = basis.py;
+
+          if (xDim === 'px') s2 = deltaMode ? basis.px + xVal : xVal;
+          else if (xDim === 'py') s4 = deltaMode ? basis.py + xVal : xVal;
+
+          if (yDim === 'px') s2 = deltaMode ? basis.px + yVal : yVal;
+          else if (yDim === 'py') s4 = deltaMode ? basis.py + yVal : yVal;
+
+        } else if (system === 'duffing') {
+          s1 = deltaMode ? basis.x + xVal : xVal;
+          s2 = deltaMode ? basis.v + yVal : yVal;
+          s3 = basis.t;
+          s4 = 0.0;
+
+          if (xDim === 'v') s2 = deltaMode ? basis.v + xVal : xVal;
+          else if (xDim === 't') s3 = deltaMode ? basis.t + xVal : xVal;
+
+          if (yDim === 'x') s1 = deltaMode ? basis.x + yVal : yVal;
+          else if (yDim === 't') s3 = deltaMode ? basis.t + yVal : yVal;
+        }
+
+        data[i] = s1;
+        data[i + 1] = s2;
+        data[i + 2] = s3;
+        data[i + 3] = s4;
+      }
+    }
+
+    const texture = this.textureManager.createFloatTexture(this.resolution, this.resolution, data);
+    console.log('Prev state texture initialized with system:', system);
+    return texture;
+  }
+
+  setButtonsState(simulating) {
+    const simulateBtn = document.getElementById('simulate');
+    const nextFrameBtn = document.getElementById('next-frame');
+
+    if (simulateBtn) simulateBtn.disabled = simulating;
+    if (nextFrameBtn) nextFrameBtn.disabled = !simulating;
+  }
+
+  async initializeSimulation() {
+    if (this.simulationProgram) {
+      return;
+    }
+
+    const state = this.ui.getState();
+    const system = state.system;
+
+    try {
+      if (!this.stateTexture) {
+        this.stateTexture = this.initializeStateTexture(null);
+      }
+      if (!this.prevStateTexture) {
+        this.prevStateTexture = this.initializePrevStateTexture();
+      }
+      if (!this.noiseTexture) {
+        this.noiseTexture = this.initializeNoiseTexture();
+      }
+
+      this.copyInitialStateToPingPong();
+      await this.compileSimulationProgram(system);
+
+      const isVerlet = state.integrator === 'verlet';
+
+      this.vao = this.gl.createVertexArray();
+      this.gl.bindVertexArray(this.vao);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
+      const posLoc = this.gl.getAttribLocation(this.simulationProgram, 'a_position');
+      this.gl.enableVertexAttribArray(posLoc);
+      this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+
+      this.dtLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_dt');
+      this.pertScaleLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_perturbationScale');
+      this.numPertLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_numPerturbations');
+      this.chunkIterLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_chunkIterations');
+      this.isFirstChunkLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_isFirstChunk');
+      this.stateLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_stateTexture');
+      this.noiseGridSizeLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_noiseGridSize');
+
+      this.gl.useProgram(this.simulationProgram);
+      this.gl.uniform1f(this.dtLoc, state.dt);
+      this.gl.uniform1f(this.pertScaleLoc, state.perturbationScale);
+      this.gl.uniform1f(this.noiseGridSizeLoc, this.noiseGridSize || 8);
+
+      this.isFirstFrame = true;
+      this.accumulatedFrameCount = 0;
+      this.cachedFtleRange = null;
+
+      console.log('Simulation initialized');
+    } catch (error) {
+      console.error('Error initializing simulation:', error);
+      throw error;
+    }
+  }
+
+  async simulate() {
+    if (this.isSimulationRunning) {
+      this.stopSimulation();
+      return;
+    }
+
+    const state = this.ui.getState();
+    const iterationsPerSample = 1;
+    const iterationsBetweenSamples = state.iterationsBetweenSamples || 5;
+    const numPerturbations = state.numPerturbations || 32;
+    const isVerlet = state.integrator === 'verlet';
+
+    try {
+      await this.initializeSimulation();
+
+      this.isSimulationRunning = true;
+      this.setButtonsState(true);
+
+      const pixelCount = this.resolution * this.resolution;
+      this.thresholdAccumulatedData = new Float32Array(pixelCount);
+      this.thresholdCrossedData = new Int8Array(pixelCount);
+      this.thresholdFrameCrossedData = new Int16Array(pixelCount);
+
+      this.internalFrameCounter = 1;
+      this.framesSinceLastSave = 1;
+
+      const progressPanel = document.getElementById('progress-panel');
+      if (progressPanel) progressPanel.style.display = 'block';
+
+      await this.runSingleFrame(iterationsPerSample, iterationsBetweenSamples, numPerturbations, isVerlet);
+      await this.accumulateFrame(true);
+      await this.saveCurrentFrame();
+      this.updateThresholdData(1);
+      this.render();
+      this.ui.updateSampleCount(1);
+      this.updateCurrentFrameDisplay(1, 1);
+      this.addThumbnailForCurrentFrame(1);
+    } catch (error) {
+      console.error('Error during simulation:', error);
+      this.stopSimulation();
+      throw error;
+    }
+  }
+
+  async initializeAndGenerateFirstFrame() {
+    const state = this.ui.getState();
+    const iterationsPerSample = 1;
+    const iterationsBetweenSamples = state.iterationsBetweenSamples || 5;
+    const numPerturbations = state.numPerturbations || 32;
+    const isVerlet = state.integrator === 'verlet';
+
+    try {
+      await this.initializeSimulation();
+
+      const pixelCount = this.resolution * this.resolution;
+      this.thresholdAccumulatedData = new Float32Array(pixelCount);
+      this.thresholdCrossedData = new Int8Array(pixelCount);
+      this.thresholdFrameCrossedData = new Int16Array(pixelCount);
+
+      this.internalFrameCounter = 1;
+      this.framesSinceLastSave = 1;
+
+      await this.runSingleFrame(iterationsPerSample, iterationsBetweenSamples, numPerturbations, isVerlet);
+      await this.accumulateFrame(true);
+      await this.saveCurrentFrame();
+
+      this.updateThresholdData(1);
+
+      this.render();
+      this.ui.updateSampleCount(1);
+      this.updateCurrentFrameDisplay(1, 1);
+      this.addThumbnailForCurrentFrame(1);
+      this.ui.updateAnimationStats(1, 1, this.savedFrames?.length || 0);
+    } catch (error) {
+      console.error('Error during first frame:', error);
+      throw error;
+    }
+  }
+
+  updateThresholdData(currentFrameNumber) {
+    if (!this.thresholdAccumulatedData || !this.savedFrames.length) return;
+
+    const state = this.ui.getState();
+    const threshold = state.threshold || 1.0;
+    const totalTime = state.integrationSteps * state.dt;
+
+    const latestFrame = this.savedFrames[this.savedFrames.length - 1];
+    const instantData = latestFrame.instantTextureData;
+
+    if (!instantData) return;
+
+    const pixelCount = this.resolution * this.resolution;
+
+    for (let pixelIdx = 0; pixelIdx < pixelCount; pixelIdx++) {
+      if (this.thresholdCrossedData[pixelIdx]) continue;
+
+      const texIdx = pixelIdx * 4;
+      const maxLogGrowth = instantData[texIdx];
+      const hasValidData = instantData[texIdx + 1];
+
+      if (hasValidData > 0 && totalTime > 0) {
+        const ftle = maxLogGrowth / totalTime;
+        this.thresholdAccumulatedData[pixelIdx] += ftle;
+
+        if (this.thresholdAccumulatedData[pixelIdx] >= threshold) {
+          this.thresholdCrossedData[pixelIdx] = 1;
+          this.thresholdFrameCrossedData[pixelIdx] = currentFrameNumber;
+        }
+      }
+    }
+  }
+
+  async generateNextFrame() {
+    this.showLiveCanvas();
+
+    const state = this.ui.getState();
+    const iterationsPerSample = 1;
+    const iterationsBetweenSamples = state.iterationsBetweenSamples || 5;
+    const numPerturbations = state.numPerturbations || 32;
+    const isVerlet = state.integrator === 'verlet';
+    const saveInterval = state.saveFrameInterval || 1;
+
+    console.log('Next frame - running single frame');
+
+    this.regenerateNoiseTexture();
+
+    try {
+      await this.runSingleFrame(iterationsPerSample, iterationsBetweenSamples, numPerturbations, isVerlet);
+      await this.accumulateFrame(this.accumulatedFrameCount === 0);
+      this.cachedFtleRange = null;
+
+      this.internalFrameCounter++;
+      this.framesSinceLastSave++;
+
+      const shouldSaveFrame = this.framesSinceLastSave >= saveInterval;
+
+      if (shouldSaveFrame) {
+        await this.saveCurrentFrame();
+        this.framesSinceLastSave = 0;
+      }
+
+      this.render();
+      this.updateThresholdData(this.internalFrameCounter);
+
+      if (shouldSaveFrame) {
+        const sampleCount = this.frameCount;
+        const currentFrame = sampleCount;
+        this.frameCount++;
+        this.ui.updateSampleCount(sampleCount + 1);
+        this.updateCurrentFrameDisplay(currentFrame + 1, currentFrame + 1);
+        this.addThumbnailForCurrentFrame(currentFrame + 1);
+        this.ui.updateAnimationStats(currentFrame + 1, currentFrame + 1, this.savedFrames?.length || 0);
+      } else {
+        this.ui.updateSampleCount(this.frameCount);
+        this.updateCurrentFrameDisplay(this.frameCount, this.frameCount);
+        this.ui.updateAnimationStats(this.frameCount, this.frameCount, this.savedFrames?.length || 0);
+      }
+    } catch (error) {
+      console.error('Error during next frame:', error);
+      throw error;
+    }
+  }
+
+  async runSingleFrame(iterationsPerSample, iterationsBetweenSamples, numPerturbations, isVerlet) {
+    if (!this.isFirstFrame) {
+      this.runSimulationStep(
+        iterationsBetweenSamples,
+        0,
+        this.vao,
+        this.stateLoc,
+        this.dtLoc,
+        this.numPertLoc,
+        this.chunkIterLoc,
+        this.isFirstChunkLoc,
+        isVerlet
+      );
+    }
+
+    await this.runSimulationStep(
+      iterationsPerSample,
+      numPerturbations,
+      this.vao,
+      this.stateLoc,
+      this.dtLoc,
+      this.numPertLoc,
+      this.chunkIterLoc,
+      this.isFirstChunkLoc,
+      isVerlet
+    );
+
+    const read = this.pingPongBuffers.getRead();
+    this.stateTexture = read.textures.color0;
+    if (isVerlet) {
+      this.prevStateTexture = read.textures.color1;
+    }
+    this.ftleTexture = read.textures.color2;
+
+    this.isFirstFrame = false;
+  }
+
+  async accumulateFrame(reset = false) {
+    if (!this.ftleTexture) {
+      console.warn('No FTLE texture available for accumulation');
+      return;
+    }
+
+    if (!this.accumulateProgram) {
+      await this.compileAccumulateProgram();
+    }
+    if (!this.bob2DistanceProgram) {
+      await this.compileBob2DistanceProgram();
+    }
+
+    if (!this.accumulatedFtleTexture) {
+      this.accumulatedFtleTexture = this.textureManager.createAccumulationTexture(
+        this.resolution,
+        this.resolution
+      );
+      this.clearTexture(this.accumulatedFtleTexture);
+    }
+    if (!this.accumulatedFtleTextureAlt) {
+      this.accumulatedFtleTextureAlt = this.textureManager.createAccumulationTexture(
+        this.resolution,
+        this.resolution
+      );
+      this.clearTexture(this.accumulatedFtleTextureAlt);
+    }
+
+    if (!this.accumulateFramebuffer) {
+      this.accumulateFramebuffer = this.gl.createFramebuffer();
+    }
+
+    const readTexture = this.accumulateReadIndex === 0 
+      ? this.accumulatedFtleTexture 
+      : this.accumulatedFtleTextureAlt;
+    const writeTexture = this.accumulateReadIndex === 0 
+      ? this.accumulatedFtleTextureAlt 
+      : this.accumulatedFtleTexture;
+
+    this.gl.useProgram(this.accumulateProgram);
+
+    const currentFtleLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_currentFtle');
+    const accumulatedFtleLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_accumulatedFtle');
+    const resetLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_reset');
+    const integrationStepsLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_integrationSteps');
+    const dtLoc = this.gl.getUniformLocation(this.accumulateProgram, 'u_dt');
+
+    const state = this.ui.getState();
+
+    this.gl.uniform1i(currentFtleLoc, 0);
+    this.gl.uniform1i(accumulatedFtleLoc, 1);
+    this.gl.uniform1i(resetLoc, reset ? 1 : 0);
+    this.gl.uniform1i(integrationStepsLoc, state.integrationSteps);
+    this.gl.uniform1f(dtLoc, state.dt);
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.ftleTexture);
+
+    this.gl.activeTexture(this.gl.TEXTURE1);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, readTexture);
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.accumulateFramebuffer);
+    this.gl.framebufferTexture2D(
+      this.gl.FRAMEBUFFER,
+      this.gl.COLOR_ATTACHMENT0,
+      this.gl.TEXTURE_2D,
+      writeTexture,
+      0
+    );
+
+    this.gl.viewport(0, 0, this.resolution, this.resolution);
+
+    if (!this.accumulateVao) {
+      this.accumulateVao = this.gl.createVertexArray();
+      this.gl.bindVertexArray(this.accumulateVao);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
+
+      const posLoc = this.gl.getAttribLocation(this.accumulateProgram, 'a_position');
+      this.gl.enableVertexAttribArray(posLoc);
+      this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+    } else {
+      this.gl.bindVertexArray(this.accumulateVao);
+    }
+
+    this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.gl.bindVertexArray(null);
+
+    this.accumulateReadIndex = 1 - this.accumulateReadIndex;
+
+    if (reset) {
+      this.accumulatedFrameCount = 1;
+    } else {
+      this.accumulatedFrameCount++;
+    }
+
+    const glError = this.gl.getError();
+    if (glError !== this.gl.NO_ERROR) {
+      console.error('GL error after accumulateFrame:', glError);
+    }
+
+    await this.accumulateBob2Distance(reset);
+  }
+
+  async accumulateBob2Distance(reset = false) {
+    if (!this.stateTexture) {
+      console.warn('No state texture available for bob2 distance accumulation');
+      return;
+    }
+
+    if (!this.bob2DistanceTexture) {
+      this.bob2DistanceTexture = this.textureManager.createAccumulationTexture(
+        this.resolution,
+        this.resolution
+      );
+      this.clearTexture(this.bob2DistanceTexture);
+    }
+    if (!this.bob2DistanceTextureAlt) {
+      this.bob2DistanceTextureAlt = this.textureManager.createAccumulationTexture(
+        this.resolution,
+        this.resolution
+      );
+      this.clearTexture(this.bob2DistanceTextureAlt);
+    }
+
+    if (!this.bob2DistanceFramebuffer) {
+      this.bob2DistanceFramebuffer = this.gl.createFramebuffer();
+    }
+
+    const readTexture = this.bob2DistanceReadIndex === 0
+      ? this.bob2DistanceTexture
+      : this.bob2DistanceTextureAlt;
+    const writeTexture = this.bob2DistanceReadIndex === 0
+      ? this.bob2DistanceTextureAlt
+      : this.bob2DistanceTexture;
+
+    this.gl.useProgram(this.bob2DistanceProgram);
+
+    const stateLoc = this.gl.getUniformLocation(this.bob2DistanceProgram, 'u_stateTexture');
+    const accumulatedLoc = this.gl.getUniformLocation(this.bob2DistanceProgram, 'u_accumulatedDistance');
+    const resetLoc = this.gl.getUniformLocation(this.bob2DistanceProgram, 'u_reset');
+
+    this.gl.uniform1i(stateLoc, 0);
+    this.gl.uniform1i(accumulatedLoc, 1);
+    this.gl.uniform1i(resetLoc, reset ? 1 : 0);
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, this.stateTexture);
+
+    this.gl.activeTexture(this.gl.TEXTURE1);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, readTexture);
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.bob2DistanceFramebuffer);
+    this.gl.framebufferTexture2D(
+      this.gl.FRAMEBUFFER,
+      this.gl.COLOR_ATTACHMENT0,
+      this.gl.TEXTURE_2D,
+      writeTexture,
+      0
+    );
+
+    this.gl.viewport(0, 0, this.resolution, this.resolution);
+
+    if (!this.bob2DistanceVao) {
+      this.bob2DistanceVao = this.gl.createVertexArray();
+      this.gl.bindVertexArray(this.bob2DistanceVao);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
+
+      const posLoc = this.gl.getAttribLocation(this.bob2DistanceProgram, 'a_position');
+      this.gl.enableVertexAttribArray(posLoc);
+      this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+    } else {
+      this.gl.bindVertexArray(this.bob2DistanceVao);
+    }
+
+    this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.gl.bindVertexArray(null);
+
+    this.bob2DistanceReadIndex = 1 - this.bob2DistanceReadIndex;
+
+    if (reset) {
+      this.bob2DistanceAccumulatedFrameCount = 1;
+    } else {
+      this.bob2DistanceAccumulatedFrameCount++;
+    }
+
+    const glError = this.gl.getError();
+    if (glError !== this.gl.NO_ERROR) {
+      console.error('GL error after accumulateBob2Distance:', glError);
+    }
+  }
+
+  setViewMode(mode) {
+    if (!['instant', 'accumulated', 'threshold', 'bob2-distance'].includes(mode)) {
+      console.error('Invalid view mode:', mode);
+      return;
+    }
+
+    this.viewMode = mode;
+
+    if (mode === 'threshold') {
+      this.computeLiveThresholdTexture();
+    }
+
+    this.render();
+
+    console.log('View mode switched to:', mode);
+  }
+
+  computeLiveThresholdTexture() {
+    const maxFrame = this.savedFrames.length;
+    const textureData = this.buildThresholdTextureData(maxFrame);
+
+    if (this.liveThresholdTexture) {
+      this.textureManager.deleteTexture(this.liveThresholdTexture);
+    }
+
+    this.liveThresholdTexture = this.textureManager.createFloatTextureFromData(
+      this.resolution, this.resolution, textureData
+    );
+  }
+
+  computeFramesToThreshold(threshold) {
+    if (!this.savedFrames || this.savedFrames.length === 0) {
+      return null;
+    }
+
+    const resolution = this.resolution;
+    const pixelCount = resolution * resolution;
+    const result = new Float32Array(pixelCount);
+
+    result.fill(-1);
+
+    for (let pixelIdx = 0; pixelIdx < pixelCount; pixelIdx++) {
+      let accumulatedLE = 0;
+
+      for (let frameIdx = 0; frameIdx < this.savedFrames.length; frameIdx++) {
+        const frame = this.savedFrames[frameIdx];
+        const textureData = frame.instantTextureData;
+
+        if (!textureData) continue;
+
+        const texIdx = pixelIdx * 4;
+        const maxLogGrowth = textureData[texIdx];
+        const hasValidData = textureData[texIdx + 1];
+
+        if (hasValidData > 0) {
+          const state = this.ui.getState();
+          const totalTime = state.integrationSteps * state.dt;
+          const ftle = totalTime > 0 ? maxLogGrowth / totalTime : 0;
+          accumulatedLE += ftle;
+
+          if (accumulatedLE >= threshold) {
+            result[pixelIdx] = frameIdx + 1;
+            break;
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  computeThresholdTexture() {
+    const state = this.ui.getState();
+    const threshold = state.threshold || 1.0;
+    const data = this.computeFramesToThreshold(threshold);
+
+    if (!data) {
+      console.warn('No saved frames to compute threshold view');
+      return;
+    }
+
+    if (this.thresholdTexture) {
+      this.textureManager.deleteTexture(this.thresholdTexture);
+    }
+
+    const rgbaData = new Float32Array(this.resolution * this.resolution * 4);
+    const maxFrame = this.savedFrames.length;
+
+    for (let i = 0; i < data.length; i++) {
+      const frameCount = data[i];
+      rgbaData[i * 4] = frameCount;
+      rgbaData[i * 4 + 1] = frameCount > 0 ? 1 : 0;
+      rgbaData[i * 4 + 2] = maxFrame;
+      rgbaData[i * 4 + 3] = 0;
+    }
+
+    this.thresholdTexture = this.textureManager.createFloatTextureFromData(
+      this.resolution, this.resolution, rgbaData
+    );
+  }
+
+  stopSimulation() {
+    if (this.vao) {
+      this.gl.bindVertexArray(null);
+      this.vao = null;
+    }
+    this.isSimulationRunning = false;
+    this.setButtonsState(false);
+
+    const progressPanel = document.getElementById('progress-panel');
+    if (progressPanel) progressPanel.style.display = 'none';
+
+    console.log('Simulation stopped');
+  }
+
+  runSimulationStep(iterations, numPerturbations, vao, stateLoc, dtLoc, numPertLoc, chunkIterLoc, isFirstChunkLoc, isVerlet) {
+    if (!this.simulationProgram) {
+      console.error('Simulation program not available');
+      throw new Error('Simulation program not initialized - click Start/Stop Simulation first');
+    }
+
+    this.gl.useProgram(this.simulationProgram);
+
+    const isFirstChunk = this.pingPongBuffers.readIndex === 0 ? 1 : 0;
+
+    this.gl.uniform1i(numPertLoc, numPerturbations);
+    this.gl.uniform1i(chunkIterLoc, iterations);
+    this.gl.uniform1i(isFirstChunkLoc, isFirstChunk);
+
+    const read = this.pingPongBuffers.getRead();
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color0);
+    this.gl.uniform1i(stateLoc, 0);
+
+    if (isVerlet) {
+      const prevStateLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_prevStateTexture');
+      this.gl.activeTexture(this.gl.TEXTURE1);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color1);
+      this.gl.uniform1i(prevStateLoc, 1);
+    }
+
+    const runningFtleLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_runningFtleTexture');
+    if (runningFtleLoc !== null) {
+      this.gl.activeTexture(this.gl.TEXTURE2);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color2);
+      this.gl.uniform1i(runningFtleLoc, 2);
+    }
+
+    const noiseLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_noiseTexture');
+    if (noiseLoc !== null && this.noiseTexture) {
+      this.gl.activeTexture(this.gl.TEXTURE3);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this.noiseTexture);
+      this.gl.uniform1i(noiseLoc, 3);
+    }
+
+    const write = this.pingPongBuffers.getWrite();
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, write.framebuffer);
+
+    this.gl.drawBuffers([
+      this.gl.COLOR_ATTACHMENT0,
+      this.gl.COLOR_ATTACHMENT1,
+      this.gl.COLOR_ATTACHMENT2
+    ]);
+
+    this.gl.bindVertexArray(vao);
+    this.gl.viewport(0, 0, this.resolution, this.resolution);
+    this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+
+    const simError = this.gl.getError();
+    if (simError !== this.gl.NO_ERROR) {
+      console.error('GL error after simulation draw:', simError);
+    }
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.gl.bindVertexArray(null);
+    this.pingPongBuffers.swap();
+  }
+
+  computeFtleRange(texture, viewType = null) {
+    const gl = this.gl;
+    const resolution = this.resolution;
+
+    const sampleStep = 8;
+    const sampleRes = Math.ceil(resolution / sampleStep);
+    const pixels = new Float32Array(sampleRes * sampleRes * 4);
+
+    const tempFb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, tempFb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+    gl.readPixels(0, 0, sampleRes, sampleRes, gl.RGBA, gl.FLOAT, pixels);
+
+    gl.deleteFramebuffer(tempFb);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const state = this.ui.getState();
+    const totalTime = state.integrationSteps * state.dt;
+    const effectiveViewType = viewType || this.viewMode;
+    const isAccumulated = effectiveViewType === 'accumulated';
+    const isThreshold = effectiveViewType === 'threshold';
+    const isBob2Distance = effectiveViewType === 'bob2-distance';
+    const valueMapping = state.valueMapping;
+    const mappingPeriod = state.mappingPeriod || 1.0;
+
+    const values = [];
+    for (let i = 0; i < pixels.length; i += 4) {
+      let rawValue = 0.0;
+
+      if (isThreshold) {
+        const frameCount = pixels[i];
+        const hasValidData = pixels[i + 1];
+        if (hasValidData > 0 && frameCount > 0) {
+          rawValue = frameCount;
+        }
+      } else if (isAccumulated) {
+        const accumulatedFtle = pixels[i];
+        const frameCount = pixels[i + 1];
+        if (frameCount > 0) {
+          rawValue = accumulatedFtle / frameCount;
+        }
+      } else if (isBob2Distance) {
+        const totalDistance = pixels[i + 2];
+        const hasValidData = pixels[i + 3];
+        if (hasValidData > 0) {
+          rawValue = totalDistance;
+        }
+      } else {
+        const maxLogGrowth = pixels[i];
+        const hasValidData = pixels[i + 1];
+        if (hasValidData > 0 && totalTime > 0) {
+          rawValue = maxLogGrowth / totalTime;
+        }
+      }
+
+      if (isFinite(rawValue)) {
+        values.push(rawValue);
+      }
+    }
+
+    if (values.length === 0) {
+      return { min: 0.0, max: 1.0 };
+    }
+
+    values.sort((a, b) => a - b);
+
+    const lowIdx = Math.floor(values.length * 0.02);
+    const highIdx = Math.floor(values.length * 0.98);
+    let displayMin = values[lowIdx];
+    let displayMax = values[highIdx];
+
+    if (valueMapping === 1) {
+      displayMin = Math.log(Math.max(displayMin, 1e-6));
+      displayMax = Math.log(Math.max(displayMax, 1e-6));
+    } else if (valueMapping === 2) {
+      displayMin = 0.0;
+      displayMax = mappingPeriod;
+    }
+
+    if (displayMin === displayMax) {
+      return { min: displayMin - 0.5, max: displayMax + 0.5 };
+    }
+
+    return { min: displayMin, max: displayMax };
+  }
+
+  render() {
+    if (this.viewingSavedFrame && this.savedFrameTextureData) {
+      this.renderSavedFrame();
+      return;
+    }
+
+    this.gl.clearColor(0.1, 0.1, 0.1, 1.0);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+
+    let textureToRender = this.ftleTexture;
+    if (this.isChunkedComputation && this.fullResolutionBuffers) {
+      textureToRender = this.fullResolutionBuffers[2].texture;
+    }
+    if (this.viewMode === 'accumulated') {
+      const isAlt = this.accumulateReadIndex === 1;
+      textureToRender = isAlt ? this.accumulatedFtleTextureAlt : this.accumulatedFtleTexture;
+    } else if (this.viewMode === 'threshold') {
+      if (!this.liveThresholdTexture) {
+        this.computeLiveThresholdTexture();
+      }
+      textureToRender = this.liveThresholdTexture;
+    } else if (this.viewMode === 'bob2-distance') {
+      const isAlt = this.bob2DistanceReadIndex === 1;
+      textureToRender = isAlt ? this.bob2DistanceTextureAlt : this.bob2DistanceTexture;
+    }
+
+    if (textureToRender && this.renderProgram) {
+      this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+
+      const state = this.ui.getState();
+
+      let range;
+      if (this.viewMode === 'threshold') {
+        range = { min: 1, max: Math.max(1, this.savedFrames.length) };
+      } else {
+        if (!this.cachedFtleRange) {
+          this.cachedFtleRange = this.computeFtleRange(textureToRender, this.viewMode);
+        }
+        range = this.cachedFtleRange;
+      }
+
+      this.gl.useProgram(this.renderProgram);
+
+      const ftleLoc = this.gl.getUniformLocation(this.renderProgram, 'u_ftleTexture');
+      const colorModeLoc = this.gl.getUniformLocation(this.renderProgram, 'u_colorMode');
+      const valueMappingLoc = this.gl.getUniformLocation(this.renderProgram, 'u_valueMapping');
+      const mappingMinLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingMin');
+      const mappingMaxLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingMax');
+      const mappingPeriodLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingPeriod');
+    const isAccumulatedLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isAccumulated');
+    const isThresholdLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isThreshold');
+    const isBob2DistanceLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isBob2Distance');
+    const frameCountLoc = this.gl.getUniformLocation(this.renderProgram, 'u_accumulatedFrameCount');
+      const integrationStepsLoc = this.gl.getUniformLocation(this.renderProgram, 'u_integrationSteps');
+      const dtLoc = this.gl.getUniformLocation(this.renderProgram, 'u_dt');
+
+      this.gl.uniform1i(ftleLoc, 0);
+      this.gl.uniform1i(colorModeLoc, this.viewMode === 'threshold' ? 0 : state.colorMode);
+      this.gl.uniform1i(valueMappingLoc, this.viewMode === 'threshold' ? 0 : state.valueMapping);
+      this.gl.uniform1f(mappingMinLoc, range.min);
+      this.gl.uniform1f(mappingMaxLoc, range.max);
+      this.gl.uniform1f(mappingPeriodLoc, this.viewMode === 'threshold' ? 1.0 : state.mappingPeriod);
+      this.gl.uniform1i(isAccumulatedLoc, this.viewMode === 'accumulated' ? 1 : 0);
+      this.gl.uniform1i(isThresholdLoc, this.viewMode === 'threshold' ? 1 : 0);
+      this.gl.uniform1i(isBob2DistanceLoc, this.viewMode === 'bob2-distance' ? 1 : 0);
+      this.gl.uniform1i(frameCountLoc, this.accumulatedFrameCount);
+      this.gl.uniform1i(integrationStepsLoc, state.integrationSteps);
+      this.gl.uniform1f(dtLoc, state.dt);
+
+      console.log('Shader uniforms:', {
+        mappingMin: range.min,
+        mappingMax: range.max,
+        colorMode: state.colorMode,
+        valueMapping: state.valueMapping,
+        isAccumulated: this.viewMode === 'accumulated',
+        isBob2Distance: this.viewMode === 'bob2-distance',
+        isBob2DistanceLoc: isBob2DistanceLoc
+      });
+
+      this.gl.activeTexture(this.gl.TEXTURE0);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, textureToRender);
+
+      if (!this.renderVao) {
+        this.renderVao = this.gl.createVertexArray();
+        this.gl.bindVertexArray(this.renderVao);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
+
+        const posLoc = this.gl.getAttribLocation(this.renderProgram, 'a_position');
+        this.gl.enableVertexAttribArray(posLoc);
+        this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+      } else {
+        this.gl.bindVertexArray(this.renderVao);
+      }
+
+      this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+
+      const glError = this.gl.getError();
+      if (glError !== this.gl.NO_ERROR) {
+        console.error('GL error after render:', glError);
+      }
+    }
+
+    this.gl.bindVertexArray(null);
+  }
+
+  handleHover(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = Math.floor(event.clientX - rect.left);
+    const y = Math.floor(event.clientY - rect.top);
+
+    const uvX = x / this.canvas.width;
+    const uvY = 1.0 - y / this.canvas.height;
+    const texX = Math.floor(uvX * this.resolution);
+    const texY = Math.floor(uvY * this.resolution);
+
+    let textureToRead;
+    let viewMode;
+
+    if (this.viewingSavedFrame && this.savedFrameViewType) {
+      viewMode = this.savedFrameViewType;
+      const frame = this.savedFrames[this.currentFrameIndex];
+      if (viewMode === 'instant') {
+        textureToRead = this.ftleTexture;
+      } else if (viewMode === 'accumulated') {
+        textureToRead = this.accumulatedFtleTexture;
+      } else if (viewMode === 'bob2-distance') {
+        const pixelIdx = texY * this.resolution + texX;
+        const textureData = frame.bob2DistanceTextureData;
+        if (textureData) {
+          const rgbaIdx = pixelIdx * 4;
+          const totalDistance = textureData[rgbaIdx + 2];
+          const hasValidData = textureData[rgbaIdx + 3] > 0;
+          this.ui.updateHoverInfo({
+            viewMode: 'bob2-distance',
+            totalDistance: hasValidData ? totalDistance : 0,
+            frameCount: this.currentFrameIndex + 1
+          });
+        }
+        return;
+      } else if (viewMode === 'threshold') {
+        const pixelIdx = texY * this.resolution + texX;
+        const textureData = frame.thresholdTextureData;
+        if (textureData) {
+          const rgbaIdx = pixelIdx * 4;
+          const frameCrossed = textureData[rgbaIdx];
+          const hasCrossed = textureData[rgbaIdx + 1] > 0;
+          const accumulated = textureData[rgbaIdx + 2];
+          this.ui.updateHoverInfo({
+            viewMode: 'threshold',
+            frameCrossed: frameCrossed,
+            hasCrossed: hasCrossed,
+            accumulated: accumulated
+          });
+        }
+        return;
+      }
+    } else {
+      viewMode = this.viewMode;
+      if (viewMode === 'instant') {
+        textureToRead = this.ftleTexture;
+      } else if (viewMode === 'accumulated') {
+        textureToRead = this.accumulatedFtleTexture;
+      } else if (viewMode === 'bob2-distance') {
+        const isAlt = this.bob2DistanceReadIndex === 1;
+        textureToRead = isAlt ? this.bob2DistanceTextureAlt : this.bob2DistanceTexture;
+      } else if (viewMode === 'threshold') {
+        if (!this.liveThresholdTexture) {
+          this.computeLiveThresholdTexture();
+        }
+        const data = this.readPixelFromThresholdData(texX, texY);
+        this.ui.updateHoverInfo({
+          viewMode: 'threshold',
+          frameCrossed: data.frameCrossed,
+          hasCrossed: data.hasCrossed,
+          accumulated: data.accumulated
+        });
+        return;
+      }
+    }
+
+    if (!textureToRead) return;
+
+    const tempFb = this.gl.createFramebuffer();
+    this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, tempFb);
+    this.gl.framebufferTexture2D(
+      this.gl.READ_FRAMEBUFFER,
+      this.gl.COLOR_ATTACHMENT0,
+      this.gl.TEXTURE_2D,
+      textureToRead,
+      0
+    );
+
+    const pixels = new Float32Array(4);
+    this.gl.readPixels(texX, texY, 1, 1, this.gl.RGBA, this.gl.FLOAT, pixels);
+
+    this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, null);
+    this.gl.deleteFramebuffer(tempFb);
+
+    const pixelIdx = texY * this.resolution + texX;
+    let initialState = null;
+    let currentState = null;
+
+    if (this.initialStateData && this.savedFrames.length > 0) {
+      const initialIdx = pixelIdx * 4;
+      initialState = {
+        theta1: this.initialStateData[initialIdx],
+        omega1: this.initialStateData[initialIdx + 1],
+        theta2: this.initialStateData[initialIdx + 2],
+        omega2: this.initialStateData[initialIdx + 3]
+      };
+
+      let frameData;
+      if (this.viewingSavedFrame && this.currentFrameIndex >= 0) {
+        frameData = this.savedFrames[this.currentFrameIndex].currentStateData;
+      } else {
+        frameData = this.savedFrames[this.savedFrames.length - 1]?.currentStateData;
+      }
+
+      if (frameData) {
+        const currentIdx = pixelIdx * 4;
+        currentState = {
+          theta1: frameData[currentIdx],
+          omega1: frameData[currentIdx + 1],
+          theta2: frameData[currentIdx + 2],
+          omega2: frameData[currentIdx + 3]
+        };
+      }
+    }
+
+    const state = this.ui.getState();
+    const params = {
+      L1: state.basisPoint.L1 || 1.0,
+      L2: state.basisPoint.L2 || 1.0,
+      m1: state.basisPoint.m1 || 1.0,
+      m2: state.basisPoint.m2 || 1.0
+    };
+
+    if (viewMode === 'accumulated') {
+      const accumulatedFtle = pixels[0];
+      const frameCount = pixels[1];
+      this.ui.updateHoverInfo({
+        viewMode: 'accumulated',
+        accumulated: accumulatedFtle,
+        frameCount: frameCount,
+        average: frameCount > 0 ? accumulatedFtle / frameCount : 0,
+        initialState,
+        currentState,
+        params
+      });
+    } else if (viewMode === 'bob2-distance') {
+      const totalDistance = pixels[2];
+      const frameCount = this.bob2DistanceAccumulatedFrameCount;
+      this.ui.updateHoverInfo({
+        viewMode: 'bob2-distance',
+        totalDistance: totalDistance,
+        frameCount: frameCount,
+        initialState,
+        currentState,
+        params
+      });
+    } else if (viewMode === 'threshold') {
+      this.ui.updateHoverInfo({
+        viewMode: 'threshold',
+        initialState,
+        currentState,
+        params
+      });
+    } else {
+      this.ui.updateHoverInfo({
+        viewMode: 'instant',
+        ftle: pixels[0],
+        state: [pixels[0], pixels[1], pixels[2], pixels[3]],
+        initialState,
+        currentState,
+        params
+      });
+    }
+  }
+
+  readPixelFromThresholdData(x, y) {
+    if (!this.thresholdFrameCrossedData || !this.thresholdCrossedData || !this.thresholdAccumulatedData) {
+      return { frameCrossed: 0, hasCrossed: false, accumulated: 0 };
+    }
+    const pixelIdx = y * this.resolution + x;
+    return {
+      frameCrossed: this.thresholdFrameCrossedData[pixelIdx],
+      hasCrossed: this.thresholdCrossedData[pixelIdx] > 0,
+      accumulated: this.thresholdAccumulatedData[pixelIdx]
+    };
+  }
+
+  downloadImage() {
+    const link = document.createElement('a');
+    link.download = 'chaos-map.png';
+    link.href = this.canvas.toDataURL('image/png');
+    link.click();
+  }
+
+  getPendulumPositions(theta1, theta2, L1 = 1.0, L2 = 1.0) {
+    const x1 = L1 * Math.sin(theta1);
+    const y1 = -L1 * Math.cos(theta1);
+    const x2 = x1 + L2 * Math.sin(theta2);
+    const y2 = y1 - L2 * Math.cos(theta2);
+    return { x1, y1, x2, y2 };
+  }
+
+  attachUIEvents() {
+    this.ui.on('systemChange', (system) => {
+      this.stateTexture = null;
+      this.prevStateTexture = null;
+      this.compileSimulationProgram(system);
+    });
+
+    this.ui.on('integratorChange', (integrator) => {
+      this.compileSimulationProgram(this.ui.getState().system);
+    });
+
+    this.ui.on('colorMapChange', () => {
+      this.render();
+      this.updateAllThumbnails();
+    });
+
+    this.ui.on('mappingChange', () => {
+      this.cachedFtleRange = null;
+      this.render();
+      this.updateAllThumbnails();
+    });
+
+    this.ui.on('resolutionChange', (resolution) => {
+      this.resolution = resolution;
+      this.pingPongBuffers.resize(this.resolution, this.resolution);
+      if (this.ftleTexture) {
+        this.gl.deleteTexture(this.ftleTexture);
+      }
+      this.ftleTexture = this.textureManager.createFloatTexture(this.resolution, this.resolution);
+
+      if (this.accumulatedFtleTexture) {
+        this.gl.deleteTexture(this.accumulatedFtleTexture);
+      }
+      this.accumulatedFtleTexture = this.textureManager.createAccumulationTexture(
+        this.resolution,
+        this.resolution
+      );
+
+      this.stateTexture = null;
+      this.prevStateTexture = null;
+      this.noiseTexture = null;
+      this.cachedFtleRange = null;
+      this.stopSimulation();
+    });
+
+    this.ui.on('viewChange', () => {
+      this.render();
+    });
+
+    this.ui.on('basisChange', () => {
+      this.stopSimulation();
+      this.stateTexture = null;
+      this.prevStateTexture = null;
+      this.cachedFtleRange = null;
+    });
+
+    this.ui.on('generateFrame', async () => {
+      if (!this.simulationProgram) {
+        await this.initializeAndGenerateFirstFrame();
+      } else {
+        await this.generateNextFrame();
+      }
+    });
+
+    this.ui.on('download', () => {
+      this.downloadImage();
+    });
+
+    this.ui.on('chunkSizeChange', (size) => {
+      this.setChunkSize(size);
+    });
+
+    this.ui.on('viewModeChange', (mode) => {
+      this.setViewMode(mode);
+    });
+
+    this.ui.on('thresholdChange', (threshold) => {
+      if (this.viewMode === 'threshold') {
+        this.computeThresholdTexture();
+        this.render();
+      }
+    });
+
+    this.ui.on('saveFrameIntervalChange', (interval) => {
+      console.log('Save frame interval changed to:', interval);
+    });
+
+    this.ui.on('assembleAnimation', async () => {
+      const result = await this.animationAssembler.assembleVideo(this, 30);
+      if (result.success) {
+        console.log('Video generated successfully');
+      } else {
+        console.error('Video generation errors:', result.errors);
+        alert('Failed to generate video: ' + result.errors.join(', '));
+      }
+    });
+
+    this.ui.on('clearFrames', () => {
+      this.clearAllFrames();
+    });
+
+    this.ui.on('toggleAnimation', () => {
+      this.toggleAnimation();
+      this.ui.setGenerateFrameEnabled(!this.isAnimationPlaying);
+    });
+
+    this.ui.on('prevFrame', () => {
+      this.prevFrame();
+    });
+
+    this.ui.on('nextFrame', () => {
+      this.nextFrame();
+    });
+
+    this.canvas.addEventListener('mousemove', (e) => this.handleHover(e));
+  }
+
+  setChunkSize(size) {
+    const validSizes = [32, 64, 128, 256, 512];
+    if (validSizes.includes(size)) {
+      this.chunkSize = size;
+    }
+  }
+
+  shouldUseChunkedComputation() {
+    return this.chunkSize < this.resolution;
+  }
+
+  calculateChunkGrid() {
+    this.totalChunksX = Math.ceil(this.resolution / this.chunkSize);
+    this.totalChunksY = Math.ceil(this.resolution / this.chunkSize);
+    return this.totalChunksX * this.totalChunksY;
+  }
+
+  createChunkBuffers() {
+    if (this.chunkPingPongBuffers) {
+      this.chunkPingPongBuffers.cleanup();
+    }
+    this.chunkPingPongBuffers = new PingPongBuffers(
+      this.gl,
+      this.textureManager,
+      this.chunkSize,
+      this.chunkSize,
+      2,
+      3
+    );
+  }
+
+  createFullResolutionBuffers() {
+    if (this.fullResolutionBuffers) {
+      this.fullResolutionBuffers.forEach(buf => {
+        if (buf.texture) this.textureManager.deleteTexture(buf.texture);
+        if (buf.framebuffer) this.gl.deleteFramebuffer(buf.framebuffer);
+      });
+    }
+    this.fullResolutionBuffers = [];
+    for (let i = 0; i < 3; i++) {
+      const texture = this.textureManager.createFloatTexture(this.resolution, this.resolution);
+      const framebuffer = this.gl.createFramebuffer();
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, framebuffer);
+      this.gl.framebufferTexture2D(
+        this.gl.FRAMEBUFFER,
+        this.gl.COLOR_ATTACHMENT0,
+        this.gl.TEXTURE_2D,
+        texture,
+        0
+      );
+      this.fullResolutionBuffers.push({ texture, framebuffer });
+    }
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+  }
+
+  generateChunkInitialStateData(chunkX, chunkY) {
+    const data = new Float32Array(this.chunkSize * this.chunkSize * 4);
+    const state = this.ui.getState();
+    const system = state.system;
+    const basis = state.basisPoint;
+    const xDim = state.xDim;
+    const yDim = state.yDim;
+    const xRange = state.xRange;
+    const yRange = state.yRange;
+    const deltaMode = state.deltaMode;
+    const chunkOffsetX = chunkX * this.chunkSize;
+    const chunkOffsetY = chunkY * this.chunkSize;
+
+    for (let y = 0; y < this.chunkSize; y++) {
+      for (let x = 0; x < this.chunkSize; x++) {
+        const i = (y * this.chunkSize + x) * 4;
+        const globalX = chunkOffsetX + x;
+        const globalY = chunkOffsetY + y;
+
+        if (globalX >= this.resolution || globalY >= this.resolution) {
+          data[i] = 0;
+          data[i + 1] = 0;
+          data[i + 2] = 0;
+          data[i + 3] = 0;
+          continue;
+        }
+
+        const u = globalX / this.resolution;
+        const v = 1.0 - globalY / this.resolution;
+
+        const xVal = xRange[0] + u * (xRange[1] - xRange[0]);
+        const yVal = yRange[0] + v * (yRange[1] - yRange[0]);
+
+        let s1, s2, s3, s4;
+
+        if (system === 'double-pendulum' || system === 'elastic-pendulum') {
+          s1 = deltaMode ? basis.theta1 + xVal : xVal;
+          s2 = basis.omega1;
+          s3 = deltaMode ? basis.theta2 + yVal : yVal;
+          s4 = basis.omega2;
+
+          if (xDim === 'omega1') s2 = deltaMode ? basis.omega1 + xVal : xVal;
+          else if (xDim === 'omega2') s4 = deltaMode ? basis.omega2 + xVal : xVal;
+
+          if (yDim === 'omega1') s2 = deltaMode ? basis.omega1 + yVal : yVal;
+          else if (yDim === 'omega2') s4 = deltaMode ? basis.omega2 + yVal : yVal;
+
+        } else if (system === 'henon-heiles') {
+          s1 = deltaMode ? basis.x + xVal : xVal;
+          s2 = basis.px;
+          s3 = deltaMode ? basis.y + yVal : yVal;
+          s4 = basis.py;
+
+          if (xDim === 'px') s2 = deltaMode ? basis.px + xVal : xVal;
+          else if (xDim === 'py') s4 = deltaMode ? basis.py + xVal : xVal;
+
+          if (yDim === 'px') s2 = deltaMode ? basis.px + yVal : yVal;
+          else if (yDim === 'py') s4 = deltaMode ? basis.py + yVal : yVal;
+
+        } else if (system === 'duffing') {
+          s1 = deltaMode ? basis.x + xVal : xVal;
+          s2 = deltaMode ? basis.v + yVal : yVal;
+          s3 = basis.t;
+          s4 = 0.0;
+
+          if (xDim === 'v') s2 = deltaMode ? basis.v + xVal : xVal;
+          else if (xDim === 't') s3 = deltaMode ? basis.t + xVal : xVal;
+
+          if (yDim === 'x') s1 = deltaMode ? basis.x + yVal : yVal;
+          else if (yDim === 't') s3 = deltaMode ? basis.t + yVal : yVal;
+        }
+
+        data[i] = s1;
+        data[i + 1] = s2;
+        data[i + 2] = s3;
+        data[i + 3] = s4;
+      }
+    }
+
+    return data;
+  }
+
+  copyChunkToFullResolution(chunkX, chunkY) {
+    const chunkOffsetX = chunkX * this.chunkSize;
+    const chunkOffsetY = chunkY * this.chunkSize;
+    const actualChunkWidth = Math.min(this.chunkSize, this.resolution - chunkOffsetX);
+    const actualChunkHeight = Math.min(this.chunkSize, this.resolution - chunkOffsetY);
+
+    const read = this.chunkPingPongBuffers.getRead();
+
+    for (let attachment = 0; attachment < 3; attachment++) {
+      const tempFb = this.gl.createFramebuffer();
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, tempFb);
+      this.gl.framebufferTexture2D(
+        this.gl.FRAMEBUFFER,
+        this.gl.COLOR_ATTACHMENT0,
+        this.gl.TEXTURE_2D,
+        read.textures[`color${attachment}`],
+        0
+      );
+
+      const pixels = new Float32Array(actualChunkWidth * actualChunkHeight * 4);
+      this.gl.readPixels(0, 0, actualChunkWidth, actualChunkHeight, this.gl.RGBA, this.gl.FLOAT, pixels);
+
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fullResolutionBuffers[attachment].framebuffer);
+
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this.fullResolutionBuffers[attachment].texture);
+      this.gl.texSubImage2D(
+        this.gl.TEXTURE_2D,
+        0,
+        chunkOffsetX,
+        chunkOffsetY,
+        actualChunkWidth,
+        actualChunkHeight,
+        this.gl.RGBA,
+        this.gl.FLOAT,
+        pixels
+      );
+
+      this.gl.deleteFramebuffer(tempFb);
+    }
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+  }
+
+  async computeChunk(chunkX, chunkY, iterations, numPerturbations, isVerlet) {
+    const state = this.ui.getState();
+    this.currentChunkX = chunkX;
+    this.currentChunkY = chunkY;
+
+    const chunkStateData = this.generateChunkInitialStateData(chunkX, chunkY);
+
+    this.gl.bindBuffer(this.gl.PIXEL_UNPACK_BUFFER, null);
+    const read = this.chunkPingPongBuffers.getRead();
+    this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color0);
+    this.gl.texSubImage2D(
+      this.gl.TEXTURE_2D,
+      0, 0, 0,
+      this.chunkSize, this.chunkSize,
+      this.gl.RGBA, this.gl.FLOAT, chunkStateData
+    );
+    this.gl.bindTexture(this.gl.TEXTURE_2D, null);
+
+    const chunkOffsetX = chunkX * this.chunkSize;
+    const chunkOffsetY = chunkY * this.chunkSize;
+    const actualChunkWidth = Math.min(this.chunkSize, this.resolution - chunkOffsetX);
+    const actualChunkHeight = Math.min(this.chunkSize, this.resolution - chunkOffsetY);
+
+    this.runChunkSimulationStep(
+      iterations,
+      numPerturbations,
+      isVerlet,
+      actualChunkWidth,
+      actualChunkHeight
+    );
+
+    this.copyChunkToFullResolution(chunkX, chunkY);
+
+    const chunkIndex = chunkY * this.totalChunksX + chunkX;
+    const totalChunks = this.totalChunksX * this.totalChunksY;
+    this.chunkProgress = (chunkIndex + 1) / totalChunks;
+    this.ui.updateIterationProgress(
+      this.chunkProgress * 100,
+      chunkIndex + 1,
+      totalChunks
+    );
+  }
+
+  runChunkSimulationStep(iterations, numPerturbations, isVerlet, chunkWidth, chunkHeight) {
+    this.gl.useProgram(this.simulationProgram);
+
+    const isFirstChunk = this.chunkPingPongBuffers.readIndex === 0 ? 1 : 0;
+
+    this.gl.uniform1i(this.numPertLoc, numPerturbations);
+    this.gl.uniform1i(this.chunkIterLoc, iterations);
+    this.gl.uniform1i(this.isFirstChunkLoc, isFirstChunk);
+
+    const read = this.chunkPingPongBuffers.getRead();
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color0);
+    this.gl.uniform1i(this.stateLoc, 0);
+
+    if (isVerlet) {
+      const prevStateLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_prevStateTexture');
+      this.gl.activeTexture(this.gl.TEXTURE1);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color1);
+      this.gl.uniform1i(prevStateLoc, 1);
+    }
+
+    const runningFtleLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_runningFtleTexture');
+    if (runningFtleLoc !== null) {
+      this.gl.activeTexture(this.gl.TEXTURE2);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, read.textures.color2);
+      this.gl.uniform1i(runningFtleLoc, 2);
+    }
+
+    const noiseLoc = this.gl.getUniformLocation(this.simulationProgram, 'u_noiseTexture');
+    if (noiseLoc !== null && this.noiseTexture) {
+      this.gl.activeTexture(this.gl.TEXTURE3);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this.noiseTexture);
+      this.gl.uniform1i(noiseLoc, 3);
+    }
+
+    const write = this.chunkPingPongBuffers.getWrite();
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, write.framebuffer);
+
+    this.gl.drawBuffers([
+      this.gl.COLOR_ATTACHMENT0,
+      this.gl.COLOR_ATTACHMENT1,
+      this.gl.COLOR_ATTACHMENT2
+    ]);
+
+    this.gl.bindVertexArray(this.vao);
+    this.gl.viewport(0, 0, chunkWidth, chunkHeight);
+    this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.gl.bindVertexArray(null);
+    this.chunkPingPongBuffers.swap();
+  }
+
+  async runChunkedSimulation(iterationsPerSample, iterationsBetweenSamples, numPerturbations, isVerlet) {
+    this.isChunkedComputation = true;
+    this.calculateChunkGrid();
+    
+    if (!this.chunkPingPongBuffers) {
+      this.createChunkBuffers();
+    }
+    if (!this.fullResolutionBuffers) {
+      this.createFullResolutionBuffers();
+    }
+
+    const totalChunks = this.totalChunksX * this.totalChunksY;
+
+    if (this.isFirstFrame) {
+      for (let chunkY = 0; chunkY < this.totalChunksY; chunkY++) {
+        for (let chunkX = 0; chunkX < this.totalChunksX; chunkX++) {
+          if (!this.isSimulationRunning) return;
+          await this.computeChunk(chunkX, chunkY, iterationsBetweenSamples, 0, isVerlet);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+    }
+
+    for (let chunkY = 0; chunkY < this.totalChunksY; chunkY++) {
+      for (let chunkX = 0; chunkX < this.totalChunksX; chunkX++) {
+        if (!this.isSimulationRunning) return;
+        await this.computeChunk(chunkX, chunkY, iterationsPerSample, numPerturbations, isVerlet);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
+
+    this.stateTexture = this.fullResolutionBuffers[0].texture;
+    this.prevStateTexture = this.fullResolutionBuffers[1].texture;
+    this.ftleTexture = this.fullResolutionBuffers[2].texture;
+
+    this.isFirstFrame = false;
+    this.isChunkedComputation = false;
+  }
+
+  async saveCurrentFrame() {
+    const state = this.ui.getState();
+    if (!state.saveAnimation) return;
+    const dataUrl = this.canvas.toDataURL('image/png');
+    const result = await this.animationStorage.saveFrame(this.frameCount + 1, dataUrl);
+    if (result.success) {
+      this.frameCount++;
+      const info = this.animationStorage.getStorageInfo();
+      this.ui.updateAnimationStats(info.frameCount, info.totalSizeBytes);
+    } else {
+      console.warn('Failed to save frame:', result.error);
+    }
+  }
+
+  cleanup() {
+    if (this.pingPongBuffers) {
+      this.pingPongBuffers.cleanup();
+    }
+    if (this.stateTexture) {
+      this.textureManager.deleteTexture(this.stateTexture);
+    }
+    if (this.prevStateTexture) {
+      this.textureManager.deleteTexture(this.prevStateTexture);
+    }
+    if (this.perturbationTexture) {
+      this.textureManager.deleteTexture(this.perturbationTexture);
+    }
+    if (this.noiseTexture) {
+      this.textureManager.deleteTexture(this.noiseTexture);
+    }
+    if (this.ftleTexture) {
+      this.textureManager.deleteTexture(this.ftleTexture);
+    }
+    if (this.accumulatedFtleTexture) {
+      this.textureManager.deleteTexture(this.accumulatedFtleTexture);
+    }
+    if (this.accumulatedFtleTextureAlt) {
+      this.textureManager.deleteTexture(this.accumulatedFtleTextureAlt);
+    }
+    if (this.bob2DistanceTexture) {
+      this.textureManager.deleteTexture(this.bob2DistanceTexture);
+    }
+    if (this.bob2DistanceTextureAlt) {
+      this.textureManager.deleteTexture(this.bob2DistanceTextureAlt);
+    }
+
+    if (this.accumulateFramebuffer) {
+      this.gl.deleteFramebuffer(this.accumulateFramebuffer);
+    }
+    if (this.bob2DistanceFramebuffer) {
+      this.gl.deleteFramebuffer(this.bob2DistanceFramebuffer);
+    }
+
+    if (this.accumulateProgram) {
+      this.gl.deleteProgram(this.accumulateProgram);
+    }
+    if (this.bob2DistanceProgram) {
+      this.gl.deleteProgram(this.bob2DistanceProgram);
+    }
+
+    if (this.tileProgram && this.tileGl) {
+      this.tileGl.deleteProgram(this.tileProgram);
+      this.tileProgram = null;
+    }
+    if (this.tilePositionBuffer && this.tileGl) {
+      this.tileGl.deleteBuffer(this.tilePositionBuffer);
+      this.tilePositionBuffer = null;
+    }
+    this.tileGl = null;
+    this.tileCanvas = null;
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async startAnimationLoop() {
+    if (this.isAnimationPlaying) return;
+
+    this.isAnimationPlaying = true;
+    this.updatePlayPauseButton();
+
+    while (this.isAnimationPlaying) {
+      if (!this.simulationProgram) {
+        await this.initializeAndGenerateFirstFrame();
+      } else {
+        await this.generateNextFrame();
+      }
+      const state = this.ui.getState();
+      await this.sleep(state.animationPauseDuration || 1000);
+    }
+  }
+
+  stopAnimationLoop() {
+    this.isAnimationPlaying = false;
+    this.updatePlayPauseButton();
+  }
+
+  toggleAnimation() {
+    if (this.isAnimationPlaying) {
+      this.stopAnimationLoop();
+    } else {
+      this.startAnimationLoop();
+    }
+  }
+
+  updatePlayPauseButton() {
+    const icon = document.getElementById('play-pause-icon');
+    if (icon) {
+      icon.textContent = this.isAnimationPlaying ? '⏸' : '▶';
+    }
+  }
+
+  async prevFrame() {
+    if (this.savedFrames && this.savedFrames.length > 0) {
+      const targetIndex = Math.max(0, (this.currentFrameIndex || 0) - 1);
+      const viewType = this.savedFrameViewType || 'instant';
+      await this.goToFrame(targetIndex, viewType);
+    }
+  }
+
+  async nextFrame() {
+    if (this.savedFrames && this.currentFrameIndex < this.savedFrames.length - 1) {
+      const targetIndex = (this.currentFrameIndex || 0) + 1;
+      const viewType = this.savedFrameViewType || 'instant';
+      await this.goToFrame(targetIndex, viewType);
+    }
+  }
+
+  async goToFrame(frameIndex, viewType) {
+    const frame = this.savedFrames?.[frameIndex];
+    if (!frame) return;
+
+    this.currentFrameIndex = frameIndex;
+    this.viewingSavedFrame = true;
+    this.savedFrameViewType = viewType;
+    this.renderSavedFrame();
+    this.updateCurrentFrameDisplay(frameIndex + 1, this.savedFrames.length);
+    this.highlightThumbnail(frameIndex, viewType);
+  }
+
+  renderSavedFrame() {
+    if (!this.renderProgram) return;
+
+    const frame = this.savedFrames?.[this.currentFrameIndex];
+    if (!frame) return;
+
+    const isAccumulated = this.savedFrameViewType === 'accumulated';
+    const isThreshold = this.savedFrameViewType === 'threshold';
+    const isBob2Distance = this.savedFrameViewType === 'bob2-distance';
+
+    let textureData, range;
+    if (isThreshold) {
+      textureData = frame.thresholdTextureData;
+      range = { min: 1, max: this.currentFrameIndex + 1 };
+    } else if (isBob2Distance) {
+      textureData = frame.bob2DistanceTextureData;
+    } else {
+      textureData = isAccumulated ? frame.accumulatedTextureData : frame.instantTextureData;
+    }
+
+    if (!textureData) return;
+
+    const texture = this.textureManager.createFloatTextureFromData(
+      this.resolution,
+      this.resolution,
+      textureData
+    );
+
+    this.gl.clearColor(0.1, 0.1, 0.1, 1.0);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+
+    const state = this.ui.getState();
+
+    if (!isThreshold) {
+      range = this.computeFtleRange(texture, this.savedFrameViewType);
+    }
+
+    this.gl.useProgram(this.renderProgram);
+
+    const ftleLoc = this.gl.getUniformLocation(this.renderProgram, 'u_ftleTexture');
+    const colorModeLoc = this.gl.getUniformLocation(this.renderProgram, 'u_colorMode');
+    const valueMappingLoc = this.gl.getUniformLocation(this.renderProgram, 'u_valueMapping');
+    const mappingMinLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingMin');
+    const mappingMaxLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingMax');
+    const mappingPeriodLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingPeriod');
+    const isAccumulatedLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isAccumulated');
+    const isThresholdLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isThreshold');
+    const isBob2DistanceLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isBob2Distance');
+    const frameCountLoc = this.gl.getUniformLocation(this.renderProgram, 'u_accumulatedFrameCount');
+    const integrationStepsLoc = this.gl.getUniformLocation(this.renderProgram, 'u_integrationSteps');
+    const dtLoc = this.gl.getUniformLocation(this.renderProgram, 'u_dt');
+
+    this.gl.uniform1i(ftleLoc, 0);
+    this.gl.uniform1i(colorModeLoc, isThreshold ? 0 : state.colorMode);
+    this.gl.uniform1i(valueMappingLoc, isThreshold ? 0 : state.valueMapping);
+    this.gl.uniform1f(mappingMinLoc, range.min);
+    this.gl.uniform1f(mappingMaxLoc, range.max);
+    this.gl.uniform1f(mappingPeriodLoc, isThreshold ? 1.0 : state.mappingPeriod);
+    this.gl.uniform1i(isAccumulatedLoc, isAccumulated ? 1 : 0);
+    this.gl.uniform1i(isThresholdLoc, isThreshold ? 1 : 0);
+    this.gl.uniform1i(isBob2DistanceLoc, isBob2Distance ? 1 : 0);
+    this.gl.uniform1i(frameCountLoc, (isAccumulated || isThreshold || isBob2Distance) ? 1 : 0);
+    this.gl.uniform1i(integrationStepsLoc, state.integrationSteps);
+    this.gl.uniform1f(dtLoc, state.dt);
+
+    console.log('Saved frame shader uniforms:', {
+      viewType: this.savedFrameViewType,
+      isAccumulated,
+      isBob2Distance,
+      mappingMin: range.min,
+      mappingMax: range.max
+    });
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+
+    if (!this.renderVao) {
+      this.renderVao = this.gl.createVertexArray();
+      this.gl.bindVertexArray(this.renderVao);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
+
+      const posLoc = this.gl.getAttribLocation(this.renderProgram, 'a_position');
+      this.gl.enableVertexAttribArray(posLoc);
+      this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+    } else {
+      this.gl.bindVertexArray(this.renderVao);
+    }
+
+    this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+    this.gl.bindVertexArray(null);
+
+    this.textureManager.deleteTexture(texture);
+  }
+
+  showLiveCanvas() {
+    this.viewingSavedFrame = false;
+    this.savedFrameViewType = null;
+    this.render();
+  }
+
+  updateCurrentFrameDisplay(current, total) {
+    const counter = document.getElementById('frame-counter');
+    if (counter) {
+      counter.textContent = `${current} / ${total}`;
+    }
+  }
+
+  readTextureData(texture) {
+    const fb = this.gl.createFramebuffer();
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fb);
+    this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, texture, 0);
+    
+    const data = new Float32Array(this.resolution * this.resolution * 4);
+    this.gl.readPixels(0, 0, this.resolution, this.resolution, this.gl.RGBA, this.gl.FLOAT, data);
+    
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+    this.gl.deleteFramebuffer(fb);
+    
+    return data;
+  }
+
+  buildThresholdTextureData(currentFrameNumber) {
+    const resolution = this.resolution;
+    const pixelCount = resolution * resolution;
+    const result = new Float32Array(pixelCount * 4);
+
+    if (!this.thresholdCrossedData || !this.thresholdFrameCrossedData || !this.thresholdAccumulatedData) {
+      return result;
+    }
+
+    for (let pixelIdx = 0; pixelIdx < pixelCount; pixelIdx++) {
+      const crossed = this.thresholdCrossedData[pixelIdx];
+      const frameCrossed = this.thresholdFrameCrossedData[pixelIdx];
+      const accumulated = this.thresholdAccumulatedData[pixelIdx];
+
+      const rgbaIdx = pixelIdx * 4;
+      if (crossed && frameCrossed <= currentFrameNumber) {
+        result[rgbaIdx] = frameCrossed;
+        result[rgbaIdx + 1] = 1;
+      } else {
+        result[rgbaIdx] = 0;
+        result[rgbaIdx + 1] = 0;
+      }
+      result[rgbaIdx + 2] = accumulated;
+      result[rgbaIdx + 3] = 0;
+    }
+
+    return result;
+  }
+
+  renderThresholdToCanvas(thresholdTextureData, maxFrame) {
+    const texture = this.textureManager.createFloatTextureFromData(
+      this.resolution,
+      this.resolution,
+      thresholdTextureData
+    );
+
+    this.gl.clearColor(0.1, 0.1, 0.1, 1.0);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+
+    const range = { min: 1, max: maxFrame };
+
+    this.gl.useProgram(this.renderProgram);
+
+    const ftleLoc = this.gl.getUniformLocation(this.renderProgram, 'u_ftleTexture');
+    const colorModeLoc = this.gl.getUniformLocation(this.renderProgram, 'u_colorMode');
+    const valueMappingLoc = this.gl.getUniformLocation(this.renderProgram, 'u_valueMapping');
+    const mappingMinLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingMin');
+    const mappingMaxLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingMax');
+    const mappingPeriodLoc = this.gl.getUniformLocation(this.renderProgram, 'u_mappingPeriod');
+    const isAccumulatedLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isAccumulated');
+    const isThresholdLoc = this.gl.getUniformLocation(this.renderProgram, 'u_isThreshold');
+    const frameCountLoc = this.gl.getUniformLocation(this.renderProgram, 'u_accumulatedFrameCount');
+    const integrationStepsLoc = this.gl.getUniformLocation(this.renderProgram, 'u_integrationSteps');
+    const dtLoc = this.gl.getUniformLocation(this.renderProgram, 'u_dt');
+
+    this.gl.uniform1i(ftleLoc, 0);
+    this.gl.uniform1i(colorModeLoc, 0);
+    this.gl.uniform1i(valueMappingLoc, 0);
+    this.gl.uniform1f(mappingMinLoc, range.min);
+    this.gl.uniform1f(mappingMaxLoc, range.max);
+    this.gl.uniform1f(mappingPeriodLoc, 1.0);
+    this.gl.uniform1i(isAccumulatedLoc, 0);
+    this.gl.uniform1i(isThresholdLoc, 1);
+    this.gl.uniform1i(frameCountLoc, maxFrame);
+    this.gl.uniform1i(integrationStepsLoc, this.ui.getState().integrationSteps);
+    this.gl.uniform1f(dtLoc, this.ui.getState().dt);
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+
+    if (!this.renderVao) {
+      this.renderVao = this.gl.createVertexArray();
+      this.gl.bindVertexArray(this.renderVao);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer.buffer);
+      const posLoc = this.gl.getAttribLocation(this.renderProgram, 'a_position');
+      this.gl.enableVertexAttribArray(posLoc);
+      this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+    } else {
+      this.gl.bindVertexArray(this.renderVao);
+    }
+
+    this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+    this.gl.bindVertexArray(null);
+
+    this.textureManager.deleteTexture(texture);
+  }
+
+  addThumbnailForCurrentFrame(frameNumber) {
+    const strip = document.getElementById('thumbnail-strip');
+    if (!strip) return;
+
+    this.renderFrameToCanvas('instant');
+    const instantThumbnailUrl = this.canvas.toDataURL('image/png');
+    const instantTextureData = this.readTextureData(this.ftleTexture);
+
+    this.renderFrameToCanvas('accumulated');
+    const accumulatedThumbnailUrl = this.canvas.toDataURL('image/png');
+    const accumulatedTextureData = this.readTextureData(
+      this.accumulateReadIndex === 1 ? this.accumulatedFtleTextureAlt : this.accumulatedFtleTexture
+    );
+
+    const state = this.ui.getState();
+    const threshold = state.threshold || 1.0;
+
+    if (!this.savedFrames) {
+      this.savedFrames = [];
+    }
+
+    const frameIndex = this.savedFrames.length;
+
+    const currentStateData = this.readTextureData(this.stateTexture);
+
+    if (frameIndex === 0) {
+      this.initialStateData = new Float32Array(currentStateData);
+    }
+
+    this.renderFrameToCanvas('bob2-distance');
+    const bob2DistanceThumbnailUrl = this.canvas.toDataURL('image/png');
+    const bob2DistanceTextureData = this.readTextureData(
+      this.bob2DistanceReadIndex === 1 ? this.bob2DistanceTextureAlt : this.bob2DistanceTexture
+    );
+
+    this.savedFrames.push({
+      instantThumbnailUrl: instantThumbnailUrl,
+      accumulatedThumbnailUrl: accumulatedThumbnailUrl,
+      bob2DistanceThumbnailUrl: bob2DistanceThumbnailUrl,
+      instantTextureData: instantTextureData,
+      accumulatedTextureData: accumulatedTextureData,
+      bob2DistanceTextureData: bob2DistanceTextureData,
+      currentStateData: currentStateData
+    });
+
+    const frameContainer = document.createElement('div');
+    frameContainer.className = 'frame-thumbnail-container';
+    frameContainer.dataset.frameIndex = frameIndex;
+
+    const instantThumb = document.createElement('div');
+    instantThumb.className = 'thumbnail-item';
+    instantThumb.dataset.frameIndex = frameIndex;
+    instantThumb.dataset.viewType = 'instant';
+    const instantImg = document.createElement('img');
+    instantImg.src = instantThumbnailUrl;
+    instantImg.alt = `Frame ${frameNumber} Instant`;
+    instantThumb.appendChild(instantImg);
+    instantThumb.addEventListener('click', () => this.goToFrame(frameIndex, 'instant'));
+    frameContainer.appendChild(instantThumb);
+
+    const accumulatedThumb = document.createElement('div');
+    accumulatedThumb.className = 'thumbnail-item';
+    accumulatedThumb.dataset.frameIndex = frameIndex;
+    accumulatedThumb.dataset.viewType = 'accumulated';
+    const accumulatedImg = document.createElement('img');
+    accumulatedImg.src = accumulatedThumbnailUrl;
+    accumulatedImg.alt = `Frame ${frameNumber} Accumulated`;
+    accumulatedThumb.appendChild(accumulatedImg);
+    accumulatedThumb.addEventListener('click', () => this.goToFrame(frameIndex, 'accumulated'));
+    frameContainer.appendChild(accumulatedThumb);
+
+    const thresholdTextureData = this.buildThresholdTextureData(frameNumber);
+    this.renderThresholdToCanvas(thresholdTextureData, frameNumber);
+    const thresholdThumbnailUrl = this.canvas.toDataURL('image/png');
+
+    this.savedFrames[frameIndex].thresholdThumbnailUrl = thresholdThumbnailUrl;
+    this.savedFrames[frameIndex].thresholdTextureData = thresholdTextureData;
+
+    const thresholdThumb = document.createElement('div');
+    thresholdThumb.className = 'thumbnail-item';
+    thresholdThumb.dataset.frameIndex = frameIndex;
+    thresholdThumb.dataset.viewType = 'threshold';
+    const thresholdImg = document.createElement('img');
+    thresholdImg.src = thresholdThumbnailUrl;
+    thresholdImg.alt = `Frame ${frameNumber} Threshold`;
+    thresholdThumb.appendChild(thresholdImg);
+    thresholdThumb.addEventListener('click', () => this.goToFrame(frameIndex, 'threshold'));
+    frameContainer.appendChild(thresholdThumb);
+
+    this.savedFrames[frameIndex].bob2DistanceThumbnailUrl = bob2DistanceThumbnailUrl;
+    this.savedFrames[frameIndex].bob2DistanceTextureData = bob2DistanceTextureData;
+
+    const bob2DistanceThumb = document.createElement('div');
+    bob2DistanceThumb.className = 'thumbnail-item';
+    bob2DistanceThumb.dataset.frameIndex = frameIndex;
+    bob2DistanceThumb.dataset.viewType = 'bob2-distance';
+    const bob2DistanceImg = document.createElement('img');
+    bob2DistanceImg.src = bob2DistanceThumbnailUrl;
+    bob2DistanceImg.alt = `Frame ${frameNumber} Bob2 Distance`;
+    bob2DistanceThumb.appendChild(bob2DistanceImg);
+    bob2DistanceThumb.addEventListener('click', () => this.goToFrame(frameIndex, 'bob2-distance'));
+    frameContainer.appendChild(bob2DistanceThumb);
+
+    strip.appendChild(frameContainer);
+    strip.scrollLeft = strip.scrollWidth;
+
+    this.render();
+  }
+
+  renderFrameToCanvas(viewMode) {
+    const originalViewMode = this.viewMode;
+    this.viewMode = viewMode;
+    this.render();
+    this.viewMode = originalViewMode;
+  }
+
+  highlightThumbnail(frameIndex, viewType) {
+    document.querySelectorAll('.thumbnail-item').forEach(el => {
+      const elFrameIndex = parseInt(el.dataset.frameIndex);
+      const elViewType = el.dataset.viewType;
+      el.classList.toggle('active', elFrameIndex === frameIndex && elViewType === viewType);
+    });
+  }
+
+  updateAllThumbnails() {
+    const strip = document.getElementById('thumbnail-strip');
+    if (!strip || !this.savedFrames || this.savedFrames.length === 0) return;
+
+    const originalViewMode = this.viewMode;
+    const wasViewingSaved = this.viewingSavedFrame;
+    const savedFrameIndex = this.currentFrameIndex;
+    const savedViewType = this.savedFrameViewType;
+
+    for (let frameIndex = 0; frameIndex < this.savedFrames.length; frameIndex++) {
+      const frame = this.savedFrames[frameIndex];
+      const viewTypes = ['instant', 'accumulated', 'threshold', 'bob2-distance'];
+
+      for (const viewType of viewTypes) {
+        this.viewMode = viewType;
+        this.viewingSavedFrame = true;
+        this.currentFrameIndex = frameIndex;
+        this.savedFrameViewType = viewType;
+        this.renderSavedFrame();
+
+        const thumbnailUrl = this.canvas.toDataURL('image/png');
+        const img = strip.querySelector(`.thumbnail-item[data-frame-index="${frameIndex}"][data-view-type="${viewType}"] img`);
+        if (img) {
+          img.src = thumbnailUrl;
+        }
+      }
+    }
+
+    this.viewMode = originalViewMode;
+    this.viewingSavedFrame = wasViewingSaved;
+    this.currentFrameIndex = savedFrameIndex;
+    this.savedFrameViewType = savedViewType;
+
+    if (wasViewingSaved) {
+      this.renderSavedFrame();
+    } else {
+      this.render();
+    }
+  }
+
+  clearAllFrames() {
+    this.animationStorage.clearFrames();
+
+    this.savedFrames = [];
+    this.frameCount = 0;
+    this.internalFrameCounter = 0;
+    this.framesSinceLastSave = 0;
+    this.currentFrameIndex = 0;
+    this.viewingSavedFrame = false;
+    this.savedFrameViewType = null;
+    this.initialStateData = null;
+
+    this.thresholdAccumulatedData = null;
+    this.thresholdCrossedData = null;
+    this.thresholdFrameCrossedData = null;
+
+    if (this.accumulatedFtleTexture) {
+      this.clearTexture(this.accumulatedFtleTexture);
+    }
+    if (this.accumulatedFtleTextureAlt) {
+      this.clearTexture(this.accumulatedFtleTextureAlt);
+    }
+    if (this.bob2DistanceTexture) {
+      this.clearTexture(this.bob2DistanceTexture);
+    }
+    if (this.bob2DistanceTextureAlt) {
+      this.clearTexture(this.bob2DistanceTextureAlt);
+    }
+
+    this.accumulatedFrameCount = 0;
+    this.accumulateReadIndex = 0;
+    this.bob2DistanceAccumulatedFrameCount = 0;
+    this.bob2DistanceReadIndex = 0;
+
+    const strip = document.getElementById('thumbnail-strip');
+    if (strip) {
+      strip.innerHTML = '';
+    }
+
+    this.showLiveCanvas();
+    this.render();
+
+    this.ui.updateAnimationStats(0, 0, 0);
+
+    console.log('All frames cleared and state reset');
+  }
+
+  renderTextureDataToImageData(textureData) {
+    const imageData = new ImageData(this.resolution, this.resolution);
+    const data = imageData.data;
+    const state = this.ui.getState();
+
+    const range = this.computeFtleRangeFromData(textureData);
+
+    for (let y = 0; y < this.resolution; y++) {
+      for (let x = 0; x < this.resolution; x++) {
+        const srcIdx = ((this.resolution - 1 - y) * this.resolution + x) * 4;
+        const dstIdx = (y * this.resolution + x) * 4;
+
+        const maxLogGrowth = textureData[srcIdx];
+        const hasValidData = textureData[srcIdx + 1];
+
+        let normalized = 0;
+        if (hasValidData > 0) {
+          const totalTime = state.integrationSteps * state.dt;
+          const ftle = totalTime > 0 ? maxLogGrowth / totalTime : 0;
+          normalized = Math.max(0, Math.min(1, (ftle - range.min) / (range.max - range.min)));
+        }
+
+        const color = this.colormap(normalized, state.colorMode);
+
+        data[dstIdx] = color[0];
+        data[dstIdx + 1] = color[1];
+        data[dstIdx + 2] = color[2];
+        data[dstIdx + 3] = 255;
+      }
+    }
+
+    return imageData;
+  }
+
+  computeFtleRangeFromData(textureData) {
+    const state = this.ui.getState();
+    const totalTime = state.integrationSteps * state.dt;
+    const values = [];
+
+    for (let i = 0; i < textureData.length; i += 4) {
+      const maxLogGrowth = textureData[i];
+      const hasValidData = textureData[i + 1];
+
+      if (hasValidData > 0 && totalTime > 0) {
+        const ftle = maxLogGrowth / totalTime;
+        if (isFinite(ftle)) {
+          values.push(ftle);
+        }
+      }
+    }
+
+    if (values.length === 0) {
+      return { min: 0, max: 1 };
+    }
+
+    values.sort((a, b) => a - b);
+    const lowIdx = Math.floor(values.length * 0.02);
+    const highIdx = Math.floor(values.length * 0.98);
+
+    return {
+      min: values[lowIdx],
+      max: values[highIdx]
+    };
+  }
+}

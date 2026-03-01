@@ -1,0 +1,22 @@
+{
+  "name": "lyapunov-loupe",
+  "version": "1.0.0",
+  "description": "GPU-accelerated chaos visualization platform for exploring nonlinear dynamical systems",
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8080",
+    "dev": "python3 -m http.server 8080"
+  },
+  "keywords": [
+    "chaos",
+    "dynamical-systems",
+    "webgl",
+    "gpu",
+    "ftle",
+    "visualization",
+    "pendulum"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {}
+}

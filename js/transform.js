@@ -1,0 +1,371 @@
+// Double Pendulum Chaos Map - Transformation Stack Classes
+
+// A Layer maps (x,y) to output values on two dimensions
+class TransformLayer {
+    constructor(dim1, dim2, min1, max1, min2, max2, deltaMode = false) {
+        this.id = Date.now() + Math.random().toString(36).substr(2, 9);
+        this.type = 'layer';
+        
+        // Support both old format (typeId string) and new format (individual dims)
+        if (arguments.length === 1 && typeof dim1 === 'string' && dim1.includes('_')) {
+            // Old format: 'theta1_theta2'
+            this.layerType = dim1;
+            const pairDef = DIMENSION_PAIRS.find(p => p.id === dim1);
+            this.dim1 = pairDef ? pairDef.dims[0] : 'theta1';
+            this.dim2 = pairDef ? pairDef.dims[1] : 'theta2';
+            const defaults = pairDef ? pairDef.defaults : { min1: -3.14, max1: 3.14, min2: -3.14, max2: 3.14 };
+            this.min1 = arguments[1] !== undefined ? arguments[1] : defaults.min1;
+            this.max1 = arguments[2] !== undefined ? arguments[2] : defaults.max1;
+            this.min2 = arguments[3] !== undefined ? arguments[3] : defaults.min2;
+            this.max2 = arguments[4] !== undefined ? arguments[4] : defaults.max2;
+            this.deltaMode = arguments[5] !== undefined ? arguments[5] : false;
+        } else {
+            // New format: individual dimensions
+            this.dim1 = dim1 || 'theta1';
+            this.dim2 = dim2 || 'theta2';
+            this.layerType = this.dim1 + '_' + this.dim2;
+            this.min1 = min1 !== undefined ? min1 : -3.14;
+            this.max1 = max1 !== undefined ? max1 : 3.14;
+            this.min2 = min2 !== undefined ? min2 : -3.14;
+            this.max2 = max2 !== undefined ? max2 : 3.14;
+            this.deltaMode = deltaMode;
+        }
+    }
+    
+    get name() {
+        const dim1Info = DIM_INFO[this.dim1];
+        const dim2Info = DIM_INFO[this.dim2];
+        return `${dim1Info?.label || this.dim1} × ${dim2Info?.label || this.dim2}`;
+    }
+    
+    // Compute output for a given viewport position (nx, ny in [0,1])
+    // MUST be numerically identical to the shader's coordinate mapping:
+    //   outX = centerX + (nx * 2.0 - 1.0) * scaleX
+    // where centerX = (min + max) / 2, scaleX = (max - min) / 2
+    // 
+    // basisState is required when deltaMode is true - it provides the base values to add to
+    computeOutput(nx, ny, basisState = null) {
+        // Use exact same math as shader for numerical consistency
+        const centerX = (this.min1 + this.max1) / 2;
+        const scaleX = (this.max1 - this.min1) / 2;
+        const centerY = (this.min2 + this.max2) / 2;
+        const scaleY = (this.max2 - this.min2) / 2;
+        
+        let val1 = centerX + (nx * 2.0 - 1.0) * scaleX;
+        let val2 = centerY + (ny * 2.0 - 1.0) * scaleY;
+        
+        // In delta mode, add to basis state values
+        if (this.deltaMode && basisState) {
+            const basisVal1 = basisState[this.dim1] ?? 0;
+            const basisVal2 = basisState[this.dim2] ?? 0;
+            val1 = basisVal1 + val1;
+            val2 = basisVal2 + val2;
+        }
+        
+        return {
+            [this.dim1]: val1,
+            [this.dim2]: val2,
+            dim1: this.dim1,
+            dim2: this.dim2
+        };
+    }
+    
+    serialize() {
+        return {
+            type: 'layer',
+            dim1: this.dim1,
+            dim2: this.dim2,
+            min1: this.min1,
+            max1: this.max1,
+            min2: this.min2,
+            max2: this.max2,
+            deltaMode: this.deltaMode
+        };
+    }
+    
+    static deserialize(data) {
+        if (data.dim1 && data.dim2) {
+            return new TransformLayer(data.dim1, data.dim2, data.min1, data.max1, data.min2, data.max2, data.deltaMode);
+        }
+        // Legacy support
+        return new TransformLayer(data.layerType, data.min1, data.max1, data.min2, data.max2, data.deltaMode);
+    }
+}
+
+// A SampledPoint stores a full pendulum state (result of previous layer)
+class SampledPoint {
+    constructor(state) {
+        this.id = Date.now() + Math.random().toString(36).substr(2, 9);
+        this.type = 'sampled';
+        this.state = { ...state }; // Full pendulum state
+    }
+    
+    get name() {
+        return `📍 Sampled State`;
+    }
+    
+    // Format state for display (compact 2-line version for UI)
+    getStateDisplay() {
+        const s = this.state;
+        return `θ₁=${s.theta1.toFixed(2)} θ₂=${s.theta2.toFixed(2)} ω₁=${s.omega1.toFixed(2)} ω₂=${s.omega2.toFixed(2)} | L₁=${s.l1.toFixed(2)} L₂=${s.l2.toFixed(2)} m₁=${s.m1.toFixed(2)} m₂=${s.m2.toFixed(2)}`;
+    }
+    
+    // Get a shorter display for the stack list
+    getShortDisplay() {
+        const s = this.state;
+        return `θ:${s.theta1.toFixed(1)},${s.theta2.toFixed(1)} ω:${s.omega1.toFixed(1)},${s.omega2.toFixed(1)}`;
+    }
+    
+    serialize() {
+        return {
+            type: 'sampled',
+            state: { ...this.state }
+        };
+    }
+    
+    static deserialize(data) {
+        return new SampledPoint(data.state);
+    }
+}
+
+// The transformation stack manages layers and sampled points
+// Structure: [Sampled, Layer, Sampled, Layer, ...] always ends with Layer
+class TransformationStack {
+    constructor() {
+        // Stack always starts with a sampled point at null state
+        // followed by the default theta mapping layer
+        this.items = [
+            new SampledPoint(NULL_STATE),
+            new TransformLayer('theta1_theta2')
+        ];
+    }
+    
+    // Get all items
+    getItems() {
+        return [...this.items];
+    }
+    
+    // Get the last layer (most recent transformation)
+    getLastLayer() {
+        for (let i = this.items.length - 1; i >= 0; i--) {
+            if (this.items[i].type === 'layer') {
+                return this.items[i];
+            }
+        }
+        return null;
+    }
+    
+    // Get the last sampled point (basis for current transformation)
+    getLastSampledPoint() {
+        for (let i = this.items.length - 1; i >= 0; i--) {
+            if (this.items[i].type === 'sampled') {
+                return this.items[i];
+            }
+        }
+        return this.items[0]; // Should always have at least the initial one
+    }
+    
+    // Add a new layer with a sampled point at the specified viewport position
+    // This is the new workflow: select layer type, click map, creates both layer + sampled point
+    addLayerWithSampledPoint(layerType, nx, ny) {
+        // First, compute the state at the clicked position using the CURRENT top layer
+        // This becomes the new sampled point
+        const state = this.computeState(nx, ny);
+        const sampledPoint = new SampledPoint(state);
+        
+        // Create the new layer with defaults
+        const newLayer = new TransformLayer(layerType);
+        
+        // Add both to stack
+        this.items.push(sampledPoint);
+        this.items.push(newLayer);
+        
+        return { sampledPoint, newLayer };
+    }
+    
+    // Remove item at index
+    removeItem(index) {
+        // Don't allow removing the initial sampled point
+        if (index === 0) return false;
+        
+        this.items.splice(index, 1);
+        
+        // Ensure stack always alternates: sampled, layer, sampled, layer...
+        // and starts with sampled, ends with layer
+        this.rebalanceStack();
+        return true;
+    }
+    
+    // Rebalance stack to maintain alternating pattern
+    rebalanceStack() {
+        // Remove consecutive items of same type, keeping the later one
+        for (let i = this.items.length - 1; i > 0; i--) {
+            if (this.items[i].type === this.items[i-1].type) {
+                this.items.splice(i-1, 1);
+            }
+        }
+        
+        // Ensure starts with sampled
+        if (this.items.length > 0 && this.items[0].type !== 'sampled') {
+            this.items.unshift(new SampledPoint(NULL_STATE));
+        }
+        
+        // Ensure ends with layer
+        if (this.items.length > 0 && this.items[this.items.length - 1].type !== 'layer') {
+            // Remove trailing sampled point if no layer after it
+            this.items.pop();
+        }
+        
+        // If stack is now empty or only has sampled point, add default layer
+        if (this.items.length === 0 || 
+            (this.items.length === 1 && this.items[0].type === 'sampled')) {
+            this.items.push(new TransformLayer('theta1_theta2'));
+        }
+    }
+    
+    // Compute pendulum state at viewport position (nx, ny)
+    // Uses last sampled point as basis + last layer's output
+    computeState(nx, ny) {
+        const basis = this.getLastSampledPoint().state;
+        const layer = this.getLastLayer();
+        
+        if (!layer) return { ...basis };
+        
+        // Pass basis state for delta mode calculation
+        const output = layer.computeOutput(nx, ny, basis);
+        if (!output) return { ...basis };
+        
+        const result = { ...basis };
+        result[output.dim1] = output[output.dim1];
+        result[output.dim2] = output[output.dim2];
+        
+        // Clamp physical values
+        if (result.l1 < 0.1) result.l1 = 0.1;
+        if (result.l2 < 0.1) result.l2 = 0.1;
+        if (result.m1 < 0.1) result.m1 = 0.1;
+        if (result.m2 < 0.1) result.m2 = 0.1;
+        
+        return result;
+    }
+    
+    // Compute what the state would be if we added a new layer at position (nx, ny)
+    // Used for preview before actually adding
+    computePreviewState(layerType, nx, ny, deltaMode = false) {
+        // First compute state at position using current top layer (this would be the new sampled point)
+        const basisState = this.computeState(nx, ny);
+        
+        // Create a temporary layer to see what values it would output at center (0.5, 0.5)
+        const tempLayer = new TransformLayer(layerType);
+        tempLayer.deltaMode = deltaMode;
+        // Pass basis state for delta mode calculation
+        const output = tempLayer.computeOutput(0.5, 0.5, basisState);
+        
+        const result = { ...basisState };
+        if (output) {
+            result[output.dim1] = output[output.dim1];
+            result[output.dim2] = output[output.dim2];
+        }
+        
+        return result;
+    }
+    
+    // Get shader parameters for rendering
+    getShaderParams() {
+        const layer = this.getLastLayer();
+        const basis = this.getLastSampledPoint().state;
+        
+        if (!layer || !layer.dim1) {
+            // Default to position map
+            return {
+                mode: 0,
+                fixedState: [0, 0, 0, 0],
+                scaleX: 3.14,  // Default theta range is -PI to PI
+                scaleY: 3.14,
+                centerX: 0,
+                centerY: 0,
+                l1: basis.l1,
+                l2: basis.l2,
+                m1: basis.m1,
+                m2: basis.m2,
+                layerDims: ['theta1', 'theta2']
+            };
+        }
+        
+        const dim1 = layer.dim1;
+        const dim2 = layer.dim2;
+        
+        // Determine mode and parameters based on which dimensions are being mapped
+        let mode = 0; // 0 = position (theta), 1 = velocity, 2 = length, 3 = mass
+        let fixedState = [0, 0, 0, 0];
+        let outL1 = basis.l1;
+        let outL2 = basis.l2;
+        let outM1 = basis.m1;
+        let outM2 = basis.m2;
+        
+        // Check if we're mapping angles
+        const hasTheta1 = dim1 === 'theta1' || dim2 === 'theta1';
+        const hasTheta2 = dim1 === 'theta2' || dim2 === 'theta2';
+        const hasOmega1 = dim1 === 'omega1' || dim2 === 'omega1';
+        const hasOmega2 = dim1 === 'omega2' || dim2 === 'omega2';
+        const hasL1 = dim1 === 'l1' || dim2 === 'l1';
+        const hasL2 = dim1 === 'l2' || dim2 === 'l2';
+        const hasM1 = dim1 === 'm1' || dim2 === 'm1';
+        const hasM2 = dim1 === 'm2' || dim2 === 'm2';
+        
+        // Calculate scale factors based on min/max ranges
+        // The shader expects scaleX/Y as half-ranges (delta from center)
+        const scaleX = (layer.max1 - layer.min1) / 2;
+        const scaleY = (layer.max2 - layer.min2) / 2;
+        
+        // Always populate fixedState with the full basis state (theta1, theta2, omega1, omega2)
+        // The shader uses these as the base values before applying layer transformations
+        fixedState[0] = basis.theta1;
+        fixedState[1] = basis.theta2;
+        fixedState[2] = basis.omega1;
+        fixedState[3] = basis.omega2;
+        
+        if (hasTheta1 || hasTheta2) {
+            mode = 0; // Position mode
+        } else if (hasOmega1 || hasOmega2) {
+            mode = 1; // Velocity mode
+        } else if (hasL1 || hasL2) {
+            mode = 2; // Length mode
+            if (hasL1) outL1 = basis.l1;
+            if (hasL2) outL2 = basis.l2;
+        } else if (hasM1 || hasM2) {
+            mode = 3; // Mass mode
+            if (hasM1) outM1 = basis.m1;
+            if (hasM2) outM2 = basis.m2;
+        }
+        
+        return {
+            mode,
+            fixedState,
+            scaleX,
+            scaleY,
+            centerX: (layer.min1 + layer.max1) / 2,
+            centerY: (layer.min2 + layer.max2) / 2,
+            l1: outL1,
+            l2: outL2,
+            m1: outM1,
+            m2: outM2,
+            layerDims: [dim1, dim2],
+            deltaMode: layer.deltaMode
+        };
+    }
+    
+    serialize() {
+        return this.items.map(item => item.serialize());
+    }
+    
+    static deserialize(data) {
+        const stack = new TransformationStack();
+        stack.items = data.map(item => {
+            if (item.type === 'layer') return TransformLayer.deserialize(item);
+            if (item.type === 'sampled') return SampledPoint.deserialize(item);
+            return null;
+        }).filter(x => x);
+        stack.rebalanceStack();
+        return stack;
+    }
+}
