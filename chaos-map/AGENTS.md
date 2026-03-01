@@ -19,7 +19,7 @@ server {
     listen 80;
     server_name localhost;
     
-    root /var/www/chaos-map;
+    root /var/www/html;
     index index.html;
     
     location / {
@@ -31,22 +31,24 @@ server {
 ### Directory Structure for Deployment
 
 ```
-/var/www/chaos-map/          # Or any web server root
-├── index.html               # Landing page
+/var/www/html/
+├── index.html               # Landing page (links to all projects)
 ├── index.css                # Landing page styles
-├── chaos-map.html           # Main application
-├── js/
-│   ├── main.js              # Entry point
-│   ├── constants.js         # Configuration
-│   ├── chaos-renderer.js    # Main renderer
-│   ├── chaos-renderer-*.js  # Renderer modules
-│   ├── cpu-physics.js       # Physics calculations
-│   ├── pendulum-sim-cpu.js  # Pendulum simulation
-│   └── transform.js         # Math utilities
-└── assets/
-    ├── chaos-map-example.png
-    └── skeu-textures/       # UI textures
-        └── *.png
+├── chaos-map/               # THIS PROJECT
+│   ├── chaos-map.html       # Main application
+│   ├── js/
+│   │   ├── main.js
+│   │   ├── constants.js
+│   │   ├── chaos-renderer.js
+│   │   ├── chaos-renderer-*.js
+│   │   ├── cpu-physics.js
+│   │   ├── pendulum-sim-cpu.js
+│   │   └── transform.js
+│   └── assets/
+│       ├── chaos-map-example.png
+│       └── skeu-textures/*.png
+├── lyapunovLoupe/           # FTLE platform (sibling project)
+└── dot-dodger/              # Game (sibling project)
 ```
 
 ### Browser Requirements
@@ -78,14 +80,17 @@ php -S localhost:8000
 
 ## Production Deployment
 
-1. Copy all files to web server root
-2. Ensure proper MIME types for `.js` and `.css` files
-3. No build step required - serve files as-is
-4. Optional: Enable gzip compression for faster loading
+```bash
+# Copy to nginx serve directory
+cp -r chaos-map/ /var/www/html/
+cp index.html /var/www/html/
+cp index.css /var/www/html/
+```
+
+No build step required - serve files as-is.
 
 ## GitHub Pages
 
-The project can be deployed to GitHub Pages:
-- Push to `main` branch
-- Enable GitHub Pages in repository settings
-- Access at `https://username.github.io/repo-name/chaos-map.html`
+The project is deployed to GitHub Pages:
+- **Repo**: `git@github.com:Antelling/Chaos-Map.git`
+- **Access**: `https://antelling.github.io/Chaos-Map/chaos-map/chaos-map.html`
